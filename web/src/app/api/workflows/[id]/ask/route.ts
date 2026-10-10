@@ -6,7 +6,7 @@ import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
 import { authorize } from "@/lib/auth/access";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120; // room for every configured LLM provider to try once (25s each)
 
 const MAX_ROWS = 80; // top rows by confidence; keeps each question cheap
 const clip = (v: unknown) => {
@@ -50,7 +50,7 @@ Rules:
 Return {"answer": string, "record_ids": number[]}`;
 
   try {
-    const res = await llmJSON<{ answer?: string; record_ids?: unknown[] }>(system, `DATASET:\n${untrusted(table)}\n\nQUESTION: ${question.trim().slice(0, 500)}`, 800);
+    const res = await llmJSON<{ answer?: string; record_ids?: unknown[] }>(system, `DATASET:\n${untrusted(table)}\n\nQUESTION: ${question.trim().slice(0, 500)}`, 800, { timeoutMs: 25_000 });
     if (!res) return NextResponse.json({ error: "No LLM key configured, so questions can't be answered." }, { status: 503 });
     const known = new Set(records.map((r) => Number(r.id)));
     const ids = (res.record_ids ?? []).map(Number).filter((n) => known.has(n)).slice(0, 25);

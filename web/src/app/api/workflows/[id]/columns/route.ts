@@ -6,7 +6,7 @@ import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
 import { authorize } from "@/lib/auth/access";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 120; // batches run in parallel; each LLM attempt is capped at 25s so failover fits
 
 const MAX_ROWS = 60;
 const BATCH = 30; // ≤ 2 LLM calls per column
@@ -67,7 +67,7 @@ Return {"answers": [{"id": number, "value": string|null, "basis": string}]}`;
     batches.map(async (rows) => {
       const lines = rows.map((r) => `id=${r.id} | ` + [...cols.map((c) => `${c}: ${clip(r.data[c])}`), `why_matched: ${clip(r.data[WHY_KEY])}`, `source: ${host(r.source_url)}`].join(" | "));
       try {
-        const res = await llmJSON<{ answers?: { id: number; value: unknown; basis?: unknown }[] }>(system, untrusted(lines.join("\n")), 2000);
+        const res = await llmJSON<{ answers?: { id: number; value: unknown; basis?: unknown }[] }>(system, untrusted(lines.join("\n")), 2000, { timeoutMs: 25_000 });
         if (!res) throw new Error("No LLM key configured");
         for (const a of res.answers ?? [])
           if (rows.some((r) => Number(r.id) === Number(a.id)))
