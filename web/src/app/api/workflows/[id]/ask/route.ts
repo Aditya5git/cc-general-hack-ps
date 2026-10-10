@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { overUsageLimit, sql } from "@/lib/db";
+import { friendlyReason } from "@/lib/errors";
 import { llmJSON } from "@/lib/llm";
 import { WHY_KEY, type WorkflowPlan } from "@/lib/types";
 import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
@@ -58,6 +59,7 @@ Return {"answer": string, "record_ids": number[]}`;
     const ids = (res.record_ids ?? []).map(Number).filter((n) => known.has(n)).slice(0, 25);
     return NextResponse.json({ answer: String(res.answer ?? "").trim() || "No answer.", record_ids: ids, rows_considered: records.length });
   } catch (e) {
-    return NextResponse.json({ error: `The AI couldn't answer right now (${(e as Error).message.slice(0, 120)})` }, { status: 502 });
+    console.error("Ask failed", e);
+    return NextResponse.json({ error: `The AI couldn't answer right now (${friendlyReason(e)}). Try again in a minute.` }, { status: 502 });
   }
 }

@@ -1,5 +1,6 @@
 import { CONNECTORS } from "../connectors";
 import { assertNotCancelled, CancelledError, logEvent, setStatus, sql } from "../db";
+import { friendlyReason, UserFacingError } from "../errors";
 import { llmProvider } from "../llm";
 import type { ConnectorId, DropReasons, RawItem, SourceStep, Workflow, WorkflowPlan } from "../types";
 import { extractAll } from "./extract";
@@ -51,7 +52,8 @@ async function collectStep(id: string, step: SourceStep): Promise<RawItem[]> {
     await logEvent(id, "collect", r.items.length ? `✓ ${c.label} returned ${r.items.length} items in ${(ms / 1000).toFixed(1)}s` : `${c.label} found nothing for "${step.query}"`, r.items.length ? "success" : "warn");
     return r.items;
   } catch (e) {
-    const msg = (e as Error).message.slice(0, 300);
+    console.error(`${step.connector} failed for "${step.query}"`, e);
+    const msg = friendlyReason(e);
     await sql`INSERT INTO sources (workflow_id, connector, query, status, duration_ms, error)
               VALUES (${id}, ${step.connector}, ${step.query}, 'failed', ${Date.now() - t0}, ${msg})`;
     await logEvent(id, "collect", `✗ ${c.label} failed: ${msg}`, "error");
@@ -77,6 +79,21 @@ function prunableSources(collected: { connector: ConnectorId; items: RawItem[] }
         if (!down.has(name)) ok.add(name);
       }
   return { ok: [...ok], down: [...down] };
+}
+
+/** Text for a failed run: our own wording as-is, anything else reduced to a plain reason (raw error to the log). */
+function runFailure(id: string, e: unknown) {
+  if (e instanceof UserFacingError) return e.message;
+  console.error(`workflow ${id} failed`, e);
+  return `This run failed (${friendlyReason(e)}). Try again.`;
+}
+
+/** Extraction notes end with "(<raw provider error>), ..."; swap that for a plain reason before it reaches the log. */
+function tidyNote(note: string) {
+  return note.replace(/\(([\s\S]+)\)(?=,|$)/, (_, raw: string) => {
+    console.error("extraction:", raw);
+    return `(${friendlyReason(raw)})`;
+  });
 }
 
 /** One line per drop reason, e.g. `3 had no title · 5 failed "located in Uttar Pradesh"`. */
@@ -108,11 +125,11 @@ export async function runWorkflow(id: string, prompt: string, opts: { review?: b
     await setStatus(id, "collecting", 15, { plan, title: plan.title });
   } catch (e) {
     if (e instanceof CancelledError) return void (await logEvent(id, "cancel", "Stopped by you before collection started", "warn"));
-    const msg = (e as Error).message;
     if (e instanceof RejectedRequestError) {
-      await setStatus(id, "failed", 100, { error: msg, title: "Request not supported" });
-      return void (await logEvent(id, "plan", `Refused: ${msg}`, "warn"));
+      await setStatus(id, "failed", 100, { error: e.message, title: "Request not supported" });
+      return void (await logEvent(id, "plan", `Refused: ${e.message}`, "warn"));
     }
+    const msg = runFailure(id, e);
     await setStatus(id, "failed", 100, { error: msg });
     await logEvent(id, "error", msg, "error");
     return;
@@ -155,7 +172,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
         }
     stats.raw = raw.length;
     await assertNotCancelled(id, stats.run_started_at);
-    if (!raw.length) throw new Error("No data could be collected from any source. Try rephrasing the request.");
+    if (!raw.length) throw new UserFacingError("No data could be collected from any source. Try rephrasing the request.");
     await logEvent(id, "collect", `Collected ${raw.length} raw items from ${stats.sources_ok} sources`, "success");
 
     // Extract, streaming validated rows into the table after every batch
@@ -165,7 +182,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
     let lastLive = 0;
     const { rows, mode, keywordItems } = await extractAll(work, raw, async (done, total, note, rowsSoFar) => {
       await assertNotCancelled(id, stats.run_started_at); // throwing here stops the remaining batches
-      if (note) await logEvent(id, "extract", note, "warn");
+      if (note) await logEvent(id, "extract", tidyNote(note), "warn");
       await sql`UPDATE workflows SET progress = ${45 + Math.round((done / total) * 40)}, updated_at = now() WHERE id = ${id}`;
       if (!rowsSoFar || done === total) return; // the final sync happens after validation below
       const snapshot = validateAndDedupe(work, [...rowsSoFar]).clean;
@@ -202,7 +219,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
         stats.raw = (stats.raw ?? 0) + fresh.length;
         const more = await extractAll(work, fresh, async (_d, _t, note) => {
           await assertNotCancelled(id, stats.run_started_at);
-          if (note) await logEvent(id, "extract", note, "warn");
+          if (note) await logEvent(id, "extract", tidyNote(note), "warn");
         });
         llmOnly &&= more.mode === "llm";
         keywordPages += more.keywordItems;
@@ -245,7 +262,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
       await logEvent(id, "cancel", `Stopped by you. ${(await sql`SELECT count(*)::int AS c FROM records WHERE workflow_id = ${id}`)[0].c} rows collected so far were kept.`, "warn");
       return;
     }
-    const msg = (e as Error).message;
+    const msg = runFailure(id, e);
     await setStatus(id, "failed", 100, { stats, error: msg });
     await logEvent(id, "error", msg, "error");
   }
