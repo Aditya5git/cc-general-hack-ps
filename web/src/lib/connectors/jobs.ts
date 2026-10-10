@@ -16,6 +16,43 @@ function rankByQuery<T>(items: T[], query: string, hay: (t: T) => string): T[] {
   return scored.map((x) => x.it);
 }
 
+// Seniority and role words appear in most postings, so they can't be the only reason a job matches.
+const GENERIC = new Set(["senior", "junior", "mid", "lead", "staff", "principal", "head", "engineer", "engineering", "developer", "development", "manager", "specialist", "intern", "software", "full", "time", "part", "contract", "freelance"]);
+
+/**
+ * Keep jobs that mention at least half the query words, best first (all words, title hits count most). Tags and
+ * descriptions are weak on their own: boards tag freely (a "Quality Dispense Technician" tagged golang) and
+ * descriptions list whole stacks. So a job also needs a specific word (not "senior", "engineer"...) in its title,
+ * or in both its tags and description.
+ */
+function matchJobs<T>(items: T[], query: string, parts: (t: T) => { title: string; tags: string; text?: string }): T[] {
+  const words = queryWords(query);
+  if (!words.length) return items;
+  const specific = words.some((w) => !GENERIC.has(w)) ? words.filter((w) => !GENERIC.has(w)) : words;
+  const squash = (s: string) => s.replace(/[-\s]+/g, "");
+  // "front-end" / "front end" match "frontend"; only for longer words, where joining can't fake a match
+  const has = (hay: string, w: string) => hay.includes(w) || (w.length >= 5 && squash(hay).includes(w));
+  const scored = items.map((it, i) => {
+    const p = parts(it);
+    const [title, tags, text] = [p.title.toLowerCase(), p.tags.toLowerCase(), (p.text ?? "").toLowerCase()];
+    let found = 0;
+    let strong = false;
+    let score = 0;
+    for (const w of words) {
+      const [inTitle, inTags, inText] = [has(title, w), has(tags, w), has(text, w)];
+      if (inTitle || inTags || inText) found++;
+      if (specific.includes(w) && (inTitle || (inTags && inText))) strong = true;
+      score += (inTitle ? 3 : 0) + (inTags ? 1 : 0) + (inText ? 1 : 0);
+    }
+    return { it, i, found, strong, score };
+  });
+  const need = Math.ceil(words.length / 2);
+  return scored
+    .filter((x) => x.strong && x.found >= need)
+    .sort((a, b) => b.found - a.found || b.score - a.score || a.i - b.i)
+    .map((x) => x.it);
+}
+
 // ---------------- Remotive ----------------
 interface RemotiveJob {
   id: number;
@@ -42,13 +79,13 @@ export async function remotiveJobs(query: string, limit: number): Promise<Connec
     const d2 = await fetchJson<{ jobs?: RemotiveJob[] }>(
       `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(kw)}&limit=${Math.max(limit * 3, 30)}`,
     );
-    jobs = rankByQuery(d2.jobs ?? [], q, (j) => `${j.title} ${j.company_name} ${(j.tags ?? []).join(" ")} ${j.category ?? ""}`);
+    jobs = d2.jobs ?? [];
   }
-  // Remotive also matches on description; float title/tag matches to the top without dropping others.
-  const top = rankByQuery(jobs, q, (j) => `${j.title} ${(j.tags ?? []).join(" ")} ${j.category ?? ""}`);
-  jobs = [...top, ...jobs.filter((j) => !top.includes(j))];
+  // Remotive's search also returns jobs that don't mention the query anywhere; drop those instead of padding with them
+  const desc = new Map(jobs.map((j) => [j, htmlToText(j.description)]));
+  jobs = matchJobs(jobs, q, (j) => ({ title: j.title, tags: `${(j.tags ?? []).join(" ")} ${j.category ?? ""}`, text: desc.get(j) }));
   const items: RawItem[] = jobs.slice(0, limit).map((j) => {
-    const desc = htmlToText(j.description);
+    const text = desc.get(j) ?? "";
     const fields = {
       title: j.title,
       company: j.company_name,
@@ -64,7 +101,7 @@ export async function remotiveJobs(query: string, limit: number): Promise<Connec
       source: "remotive_jobs",
       url: j.url,
       title: `${j.title} — ${j.company_name}`,
-      text: clip(desc, 4000),
+      text: clip(text, 4000),
       fields,
       published_at: j.publication_date,
     };
@@ -148,7 +185,13 @@ export async function remoteokJobs(query: string, limit: number): Promise<Connec
   const url = "https://remoteok.com/api";
   const data = await fetchJson<RemoteOkJob[]>(url);
   const jobs = (Array.isArray(data) ? data : []).filter((j) => !j.legal && j.position);
-  const ranked = rankByQuery(jobs, query, (j) => `${j.position} ${j.company} ${(j.tags ?? []).join(" ")} ${j.location ?? ""}`);
+  // any single word used to be enough ("senior" kept a Senior Accountant); now every word, title or description first
+  const desc = new Map(jobs.map((j) => [j, htmlToText(j.description)]));
+  const ranked = matchJobs(jobs, query, (j) => ({
+    title: j.position ?? "",
+    tags: `${(j.tags ?? []).join(" ")} ${j.company ?? ""} ${j.location ?? ""}`,
+    text: desc.get(j),
+  }));
   const items: RawItem[] = ranked.slice(0, limit).map((j) => {
     const pageUrl = j.url || `https://remoteok.com/remote-jobs/${j.slug ?? j.id}`;
     const salary =
@@ -159,7 +202,7 @@ export async function remoteokJobs(query: string, limit: number): Promise<Connec
       source: "remoteok_jobs",
       url: pageUrl,
       title: `${j.position} — ${j.company}`,
-      text: clip(htmlToText(j.description), 4000),
+      text: clip(desc.get(j) ?? "", 4000),
       fields: {
         title: j.position,
         company: j.company,
