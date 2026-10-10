@@ -13,9 +13,10 @@ const LEVEL: Record<WorkflowEvent["level"], { text: string; tag: string }> = {
 
 export function ActivityLog({ events, running }: { events: WorkflowEvent[]; running: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true); // follow new events only while the reader is at the bottom
   useEffect(() => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [events.length]);
 
   return (
@@ -26,7 +27,11 @@ export function ActivityLog({ events, running }: { events: WorkflowEvent[]; runn
         <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
         <span className="ml-2 font-mono text-[11px] text-zinc-500">datapilot · pipeline.log</span>
       </div>
-      <div ref={ref} className="max-h-[480px] overflow-y-auto p-3 font-mono text-[12px] leading-6">
+      <div ref={ref}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }} className="max-h-[480px] overflow-y-auto p-3 font-mono text-[12px] leading-6">
         {events.length === 0 && <div className="text-zinc-600">Waiting for events…</div>}
         {events.map((e) => {
           const l = LEVEL[e.level] ?? LEVEL.info;

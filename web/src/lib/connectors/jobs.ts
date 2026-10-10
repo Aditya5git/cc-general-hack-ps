@@ -57,10 +57,10 @@ function matchJobs<T>(items: T[], query: string, parts: (t: T) => { title: strin
 
 // Pay in English and German (Arbeitnow): a salary-sized amount (3+ digits or "90k") next to a currency or pay word.
 const MONEY = /[$€£₹]\s?\d|\d\s?[$€£₹]|\b(usd|eur|gbp|chf|inr)\s?\d|\d\s?(usd|eur|gbp|chf|inr)\b/i;
-const AMOUNT = /(\d[\d,.\s]*\d\d|\d{2,3}\s?k\b)(?!\s?%)/i; // "100%" is not an amount
-const PAY_WORD = /\b(salary|salaries|compensation|pay|wage|stipend|ctc|lpa|gehalt|vergütung|bezahlung)\b|per (year|annum|month|hour)|\/\s?(yr|year|month|hr|hour)\b/i;
+const AMOUNT = /(\d[\d,.\s]*\d\d|\d{2,3}\s?k\b|\d{1,3}(\.\d+)?\s?(lpa|lakhs?|lacs?)\b)(?!\s?%)/i; // "100%" is not an amount; "12 LPA" is
+const PAY_WORD = /\b(salary|salaries|compensation|pay|wage|stipend|ctc|lpa|lakhs?|gehalt|vergütung|bezahlung)\b|per (year|annum|month|hour)|\/\s?(yr|year|month|hr|hour)\b/i;
 // Money that isn't the job's pay: funding, market size, product prices, perks
-const NOT_PAY = /\d\s?[mb]\b|million|billion|\b(raised|funding|valuation|revenue|market|series [a-e]|investors?|paid out|offer|start for|price|allowance|voucher|gutschein|ticket|coupon|discount|holiday|vacation|urlaub|coworking|401\s?\(?k\)?)/i;
+const NOT_PAY = /\d\s?[mb]\b|million|billion|\b(raised|funding|valuation|revenue|market|series [a-e]|investors?|paid out|start for|price|allowance|voucher|gutschein|ticket|coupon|discount|holiday|vacation|urlaub|coworking|401\s?\(?k\)?)/i;
 
 /**
  * Job APIs often leave salary empty and state it deep in the description, but extraction only reads the start of

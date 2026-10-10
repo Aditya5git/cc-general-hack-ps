@@ -298,6 +298,7 @@ export async function extractAll(
   plan: WorkflowPlan,
   items: RawItem[],
   onProgress: (done: number, total: number, note?: string, rowsSoFar?: Extracted[]) => Promise<void>,
+  deadline?: number, // ms timestamp: past it, the remaining batches skip the AI so the run can finish in time
 ): Promise<{ rows: Extracted[]; mode: "llm" | "heuristic" | "mixed"; keywordItems: number }> {
   const batches: RawItem[][] = [];
   const BATCH = batchSize();
@@ -314,6 +315,13 @@ export async function extractAll(
     while (idx < batches.length && !stopped) {
       const batch = batches[idx++];
       let out: Extracted[] | null = null;
+      if (llmAvailable && deadline && Date.now() > deadline) {
+        llmAvailable = false;
+        await onProgress(done, batches.length, "This run is close to its time limit, so the remaining pages are matched by keywords").catch((err) => {
+          stopped = true;
+          throw err;
+        });
+      }
       if (llmAvailable) {
         const notes: string[] = [];
         let failure: unknown;

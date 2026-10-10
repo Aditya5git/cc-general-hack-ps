@@ -8,19 +8,30 @@ import type { Workflow } from "@/lib/types";
 import { Logo } from "./Logo";
 import { StatusIcon } from "./StatusBadge";
 import { AccountMenu } from "./AccountMenu";
-import { fetchJSON } from "./utils";
+import { fetchJSON, isRunning } from "./utils";
 
 function useWorkflows() {
   const [workflows, setWorkflows] = useState<Workflow[] | null>(null);
   const pathname = usePathname();
   useEffect(() => {
     let alive = true;
+    let anyRunning = true;
+    let last = 0;
     const load = () =>
       fetchJSON<{ workflows: Workflow[] }>("/api/workflows")
-        .then((j) => alive && setWorkflows(j.workflows ?? []))
+        .then((j) => {
+          if (!alive) return;
+          setWorkflows(j.workflows ?? []);
+          anyRunning = (j.workflows ?? []).some((w) => isRunning(w.status));
+        })
         .catch(() => {}); // keep last good list; retry on next tick
     load();
-    const t = setInterval(load, 5000);
+    // every 5s while something runs, every 30s otherwise, never in a hidden tab: each poll wakes the database
+    const t = setInterval(() => {
+      if (document.hidden || Date.now() - last < (anyRunning ? 5000 : 30_000)) return;
+      last = Date.now();
+      load();
+    }, 5000);
     return () => {
       alive = false;
       clearInterval(t);

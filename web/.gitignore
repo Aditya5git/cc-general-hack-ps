@@ -45,3 +45,4 @@ next-env.d.ts
 
 # fetched pages and plans saved by `pnpm eval` for --replay
 /eval/cache/
+!.env.example

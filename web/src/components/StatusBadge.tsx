@@ -35,7 +35,7 @@ export function StatusIcon({ status, size = 14, mono = false }: { status: Workfl
   if (status === "failed")
     return (
       <svg width={s} height={s} viewBox="0 0 14 14" aria-hidden>
-        <circle cx="7" cy="7" r="6" className="fill-zinc-400" />
+        <circle cx="7" cy="7" r="6" className="fill-danger" />
         <path d="M5 5l4 4M9 5l-4 4" className="stroke-zinc-950" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
     );

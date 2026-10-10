@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { Clock, ExternalLink, Link2, X } from "lucide-react";
 import type { DataRecord, FieldSpec } from "@/lib/types";
 import { connectorLabel, formatDateTime, hostOf, humanize } from "@/components/utils";
-import { Cell, ConfidenceBar } from "./Cell";
+import { Cell, ConfidenceBar, formatValue } from "./Cell";
 import { Evidence, MatchDetails } from "./Match";
 
 export function RecordDrawer({
@@ -78,7 +78,7 @@ export function RecordDrawer({
           <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-wider text-zinc-500">Record #{record.id}</div>
             <h2 id="record-drawer-title" className="mt-0.5 truncate text-base font-medium text-white">
-              {String(record.data[fields[0]?.name] ?? record.data.name ?? record.data.title ?? "Record details")}
+              {formatValue(record.data[fields[0]?.name] ?? record.data.name ?? record.data.title ?? "Record details")}
             </h2>
           </div>
           <button

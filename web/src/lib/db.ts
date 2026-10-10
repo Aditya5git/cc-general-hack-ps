@@ -86,7 +86,7 @@ export async function deleteIdleWorkflow(workflowId: string) {
 }
 
 /** Runs execute inside a serverless request; if it dies, nothing else would ever finish them. */
-export async function failStuckWorkflows(minutes = 8) {
+export async function failStuckWorkflows(minutes = 6) {
   await sql`UPDATE workflows SET status = 'failed', progress = 100, finished_at = now(), updated_at = now(),
       error = 'This run was interrupted (the server restarted or timed out). Use Rerun or Refresh to try again.'
     WHERE status = ANY(${RUNNING}) AND updated_at < now() - make_interval(mins => ${minutes})`;

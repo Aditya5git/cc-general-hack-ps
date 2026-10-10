@@ -30,6 +30,7 @@ export default function WorkflowsPage() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<string>("all");
   const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null); // shown inline instead of a browser alert
 
   const load = useCallback(async () => {
     try {
@@ -69,7 +70,7 @@ export default function WorkflowsPage() {
       const j = await fetchJSON<{ id: string }>(`/api/workflows/${id}/rerun`, { method: "POST" });
       router.push(`/workflows/${j.id}`);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Rerun failed");
+      setActionError(e instanceof Error ? e.message : "Rerun failed");
       setBusy(null);
     }
   }
@@ -81,7 +82,7 @@ export default function WorkflowsPage() {
       await fetchJSON(`/api/workflows/${w.id}`, { method: "DELETE" });
       setWorkflows((ws) => (ws ?? []).filter((x) => x.id !== w.id));
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
+      setActionError(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setBusy(null);
     }
@@ -91,6 +92,11 @@ export default function WorkflowsPage() {
     <div className="flex min-h-full flex-col">
       <header className="flex h-11 items-center gap-3 border-b border-line px-5">
         <span className="text-[13px] text-zinc-200">Workflows</span>
+        {actionError && (
+          <button type="button" onClick={() => setActionError(null)} className="truncate text-[12.5px] text-danger-soft" title="Dismiss">
+            {actionError} ✕
+          </button>
+        )}
         <div className="flex items-center gap-0.5">
           {FILTERS.map((f) => (
             <button

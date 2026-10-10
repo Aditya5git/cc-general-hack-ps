@@ -228,7 +228,7 @@ export function DataTable({
           {colBusy ? (
             <div className="flex items-center gap-2 text-[13px] text-zinc-300">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Enrichment agent is answering “{colBusy}” for {records.length} rows…
+              Enrichment agent is answering “{colBusy}” for the top {Math.min(records.length, 60)} rows…
             </div>
           ) : (
             <form

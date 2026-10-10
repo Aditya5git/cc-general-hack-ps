@@ -112,6 +112,7 @@ function describeDrops(r: DropReasons, idField: string) {
 
 /** Stage 1: understand + plan. With `review`, stop so the user can edit the plan before running it. */
 export async function runWorkflow(id: string, prompt: string, opts: { review?: boolean } = {}) {
+  const startedAt = Date.now();
   let plan: WorkflowPlan;
   try {
     await setStatus(id, "planning", 5);
@@ -138,11 +139,16 @@ export async function runWorkflow(id: string, prompt: string, opts: { review?: b
     await logEvent(id, "error", msg, "error");
     return;
   }
-  await executePlan(id, plan);
+  await executePlan(id, plan, { startedAt });
 }
 
 /** Stage 2: collect → extract → validate/dedupe → store. Also used to refresh a dataset with its saved plan. */
-export async function executePlan(id: string, plan: WorkflowPlan, opts: { refresh?: boolean } = {}) {
+// Runs live in an after() with maxDuration 300s: stop asking the AI at ~230s (counted from when the request started)
+// and finish with keyword matching, so the run completes instead of being killed mid-way.
+const RUN_BUDGET_MS = 230_000;
+
+export async function executePlan(id: string, plan: WorkflowPlan, opts: { refresh?: boolean; startedAt?: number } = {}) {
+  const deadline = (opts.startedAt ?? Date.now()) + RUN_BUDGET_MS;
   const [prev] = await sql`SELECT stats, now() AS started FROM workflows WHERE id = ${id}`;
   const prevRuns = (prev?.stats as Workflow["stats"])?.runs ?? 0;
   const runs = (opts.refresh ? Math.max(prevRuns, 1) : prevRuns) + 1; // datasets from before run counting still refresh as #2
@@ -200,7 +206,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
         })
         .catch((e) => console.error("live sync failed", e));
       await sync;
-    });
+    }, deadline);
     let llmOnly = mode === "llm";
     let keywordPages = keywordItems;
     stats.extracted = rows.length;
@@ -224,7 +230,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
         const more = await extractAll(work, fresh, async (_d, _t, note) => {
           await assertNotCancelled(id, stats.run_started_at);
           if (note) await logEvent(id, "extract", tidyNote(note), "warn");
-        });
+        }, deadline);
         llmOnly &&= more.mode === "llm";
         keywordPages += more.keywordItems;
         rows.push(...more.rows);

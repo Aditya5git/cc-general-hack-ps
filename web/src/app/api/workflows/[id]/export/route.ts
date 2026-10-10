@@ -6,8 +6,10 @@ import { rankRows } from "@/lib/pipeline/validate";
 export const dynamic = "force-dynamic";
 
 const csvCell = (v: unknown) => {
-  const s = v == null ? "" : Array.isArray(v) ? v.join("; ") : typeof v === "object" ? JSON.stringify(v) : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  let s = v == null ? "" : Array.isArray(v) ? v.join("; ") : typeof v === "object" ? JSON.stringify(v) : String(v);
+  // scraped text starting with = + - @ would run as a formula in Excel/Sheets; a leading ' keeps it text
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -46,5 +48,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const header = [...cols, "why_matched", "criteria_met", "source", "source_url", "confidence", "fetched_at"];
   const lines = [header.join(","), ...records.map((r) =>
     [...cols.map((c) => r.data[c]), r.data[WHY_KEY], criteriaMet(r.data), r.source_name, r.source_url, r.confidence, new Date(r.fetched_at).toISOString()].map(csvCell).join(","))];
-  return new Response(lines.join("\n"), { headers: { "content-type": "text/csv", "content-disposition": `attachment; filename="${slug}.csv"` } });
+  // BOM so Excel reads UTF-8 (₹, €, accented names) instead of mangling it
+  return new Response("\uFEFF" + lines.join("\n"), { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${slug}.csv"` } });
 }

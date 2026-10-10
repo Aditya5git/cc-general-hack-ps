@@ -56,6 +56,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const [busy, setBusy] = useState<"rerun" | "refresh" | "delete" | "stop" | null>(null);
   const [pollKey, setPollKey] = useState(0); // bump to resume polling after review/refresh
   const [cited, setCited] = useState<number[] | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null); // shown inline instead of a browser alert
   const [now, setNow] = useState(() => Date.now()); // ticks while running so the "stuck" check re-evaluates
   const [showBuild, setShowBuild] = useState(true); // "How this dataset was built": opens while a run is in progress, collapses when it finishes
   const lastRecordFetch = useRef(0);
@@ -128,7 +129,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       const j = await fetchJSON<{ id: string }>(`/api/workflows/${id}/rerun`, { method: "POST" });
       router.push(`/workflows/${j.id}`);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Rerun failed");
+      setActionError(e instanceof Error ? e.message : "Rerun failed");
       setBusy(null);
     }
   }
@@ -142,7 +143,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       // stay disabled a few seconds so a second click can't land before polling shows the run started
       await new Promise((r) => setTimeout(r, 3000));
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Refresh failed");
+      setActionError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setBusy(null);
     }
@@ -154,7 +155,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       await fetchJSON(`/api/workflows/${id}/cancel`, { method: "POST" });
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Couldn't stop the workflow");
+      setActionError(e instanceof Error ? e.message : "Couldn't stop the workflow");
     } finally {
       setBusy(null);
     }
@@ -169,7 +170,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       });
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Couldn't update watch");
+      setActionError(e instanceof Error ? e.message : "Couldn't update watch");
     }
   }
 
@@ -180,7 +181,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       await fetchJSON(`/api/workflows/${id}`, { method: "DELETE" });
       router.push("/workflows");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
+      setActionError(e instanceof Error ? e.message : "Delete failed");
       setBusy(null);
     }
   }
@@ -222,7 +223,8 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   // Last sign of life: the row's updated_at (stage changes, batches) or the newest log event (each source start/finish).
   // Collecting can run a long time between stage changes, so updated_at alone would cry "stuck" too early.
   const lastActivity = Math.max(new Date(w.updated_at).getTime() || 0, new Date(detail.events.at(-1)?.created_at ?? 0).getTime() || 0);
-  const stuck = running && now - lastActivity > 90_000;
+  // 3 minutes: one AI call may take up to 2 (provider failover), and planning logs nothing while it thinks
+  const stuck = running && now - lastActivity > 180_000;
   const sourcesTotal = sourcesOk + sourcesFailed;
 
   return (
@@ -276,6 +278,11 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[22px] font-semibold text-zinc-100">{w.title || w.plan?.title || w.prompt}</h1>
           <StatusBadge status={w.status} />
+          {actionError && (
+            <button type="button" onClick={() => setActionError(null)} className="text-left text-[12.5px] text-danger-soft" title="Dismiss">
+              {actionError} ✕
+            </button>
+          )}
           {error && <span className="text-[12px] text-zinc-500">reconnecting…</span>}
           {!canEdit && (
             <span
@@ -327,7 +334,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden />
           <div className="min-w-0 flex-1">
             <p className="text-[13px] font-medium text-zinc-200">This run seems stuck</p>
-            <p className="mt-0.5 text-[12.5px] text-zinc-500">No progress for over a minute. You can start it again as a new run.</p>
+            <p className="mt-0.5 text-[12.5px] text-zinc-500">No progress for about three minutes. You can start it again as a new run.</p>
           </div>
           <button
             type="button"
