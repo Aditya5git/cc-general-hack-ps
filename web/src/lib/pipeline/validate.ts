@@ -240,7 +240,7 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
     let key = parts.join("|");
     if (parts.every((p) => !p)) key = norm(r.item.url);
     // a half-empty key ("senior react developer|") would merge different companies' jobs: only within one page
-    else if (parts.some((p) => !p)) key += `|${norm(r.item.url)}`;
+    else if (parts.some((p) => !p)) key = `${norm(r.item.url)}|${key}`; // page first, so the 300-char cut keeps it
 
     const row: CleanRow = {
       data,

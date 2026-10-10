@@ -126,6 +126,8 @@ export const QUOTE_KEY = "_quote"; // verbatim excerpt from the source backing t
 export const QUOTE_OK_KEY = "_quote_verified"; // true when the excerpt was found in the fetched text
 export const FIELD_SOURCES_KEY = "_field_sources"; // { column: url } for values a merge took from another page
 export const METHOD_KEY = "_method"; // "keyword" when the row came from the keyword fallback instead of the AI
+/** Metadata that describes one page (the row's source_url); replaced, never merged, when a row is saved again. */
+export const PAGE_KEYS = [WHY_KEY, CHECKS_KEY, QUOTE_KEY, QUOTE_OK_KEY, METHOD_KEY, FIELD_SOURCES_KEY];
 
 export interface DataRecord {
   id: number;
