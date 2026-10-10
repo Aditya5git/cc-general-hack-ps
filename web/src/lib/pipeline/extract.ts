@@ -79,7 +79,7 @@ Return {"rows": [{"item": <ITEM number>, "relevance": number, "why": string, "qu
   return toExtracted(res.rows ?? [], items);
 }
 
-type ModelRow = { item: number; relevance: number; why?: string; quote?: string; checks?: unknown[]; data: Record<string, unknown> };
+type ModelRow = { item: number | string; relevance: number; why?: string; quote?: string; checks?: unknown[]; data: Record<string, unknown> };
 
 const MAX_ROWS_PER_PAGE = 8;
 
@@ -87,16 +87,19 @@ const MAX_ROWS_PER_PAGE = 8;
 const outputBudget = (items: RawItem[]) =>
   Math.min(12_000, Math.max(2500, 400 + items.reduce((n, it) => n + (PAGE_SOURCES.has(it.source) ? MAX_ROWS_PER_PAGE * 220 : 300), 0)));
 
+// some models write the item number as a string ("0"); anything else that isn't a whole number is not an item
+const itemIndex = (r: ModelRow): number => (typeof r.item === "string" ? (/^\d+$/.test(r.item) ? Number(r.item) : NaN) : r.item);
+
 function toExtracted(rows: ModelRow[], items: RawItem[]): Extracted[] {
   return rows
-    .filter((r) => r && r.data && Number.isInteger(r.item) && items[r.item])
+    .filter((r) => r && r.data && Number.isInteger(itemIndex(r)) && items[itemIndex(r)])
     .map((r) => ({
       data: r.data,
-      item: items[r.item],
+      item: items[itemIndex(r)],
       relevance: clamp(r.relevance ?? 0.7),
       why: typeof r.why === "string" ? r.why : undefined,
       checks: Array.isArray(r.checks) ? r.checks.map((c) => (typeof c === "boolean" ? c : null)) : undefined,
-      ...verifyQuote(r.quote, items[r.item]),
+      ...verifyQuote(r.quote, items[itemIndex(r)]),
     }));
 }
 
@@ -137,7 +140,9 @@ export function salvageRows(text: string): ModelRow[] {
  * halves, and a half that still fails keeps its complete rows. `missed` = items the answer never reached, for the
  * keyword fallback. Null when no LLM is configured.
  */
-async function llmExtract(plan: WorkflowPlan, items: RawItem[], notes: string[], retry = true): Promise<{ rows: Extracted[]; missed: RawItem[] } | null> {
+type Extraction = { rows: Extracted[]; missed: RawItem[]; error?: unknown };
+
+async function llmExtract(plan: WorkflowPlan, items: RawItem[], notes: string[], retry = true): Promise<Extraction | null> {
   try {
     const rows = await llmBatch(plan, items);
     return rows && { rows, missed: [] };
@@ -147,10 +152,16 @@ async function llmExtract(plan: WorkflowPlan, items: RawItem[], notes: string[],
     if (retry && items.length > 1) {
       notes.push(`The AI answer for ${items.length} pages ${what}, so they were retried in two smaller batches`);
       const mid = Math.ceil(items.length / 2);
-      // one half after the other, so a retry never adds to the number of calls in flight
-      const a = await llmExtract(plan, items.slice(0, mid), notes, false);
-      const b = await llmExtract(plan, items.slice(mid), notes, false);
-      return { rows: [...(a?.rows ?? []), ...(b?.rows ?? [])], missed: [...(a?.missed ?? []), ...(b?.missed ?? [])] };
+      // one half after the other, so a retry never adds to the number of calls in flight. A half that fails
+      // (rate limit, outage) sends only its own pages to keywords and keeps the other half's rows; the error is
+      // passed on so the run can still stop asking a provider that is out of quota.
+      const half = async (part: RawItem[]): Promise<Extraction> =>
+        llmExtract(plan, part, notes, false)
+          .then((r) => r ?? { rows: [], missed: part })
+          .catch((error) => ({ rows: [], missed: part, error }));
+      const a = await half(items.slice(0, mid));
+      const b = a.error ? { rows: [], missed: items.slice(mid), error: a.error } : await half(items.slice(mid));
+      return { rows: [...a.rows, ...b.rows], missed: [...a.missed, ...b.missed], error: a.error ?? b.error };
     }
     const rows = toExtracted(salvageRows(e.partial), items);
     const reached = rows.reduce((n, r) => Math.max(n, items.indexOf(r.item)), -1);
@@ -291,14 +302,20 @@ export async function extractAll(
       let out: Extracted[] | null = null;
       if (llmAvailable) {
         const notes: string[] = [];
+        let failure: unknown;
         try {
           const res = await llmExtract(plan, batch, notes);
           if (res === null) llmAvailable = false;
           else {
             out = [...res.rows, ...res.missed.map((it) => heuristicMap(plan, it, kw))];
             keywordItems += res.missed.length;
+            failure = res.error;
           }
         } catch (e) {
+          failure = e;
+        }
+        if (failure) {
+          const e = failure;
           const msg = (e as Error).message;
           // llmJSON already tried every provider: on a rate limit, empty balance or bad key, stop asking for
           // the rest of this run instead of failing the same way on every remaining batch
