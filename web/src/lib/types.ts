@@ -100,6 +100,8 @@ export interface Workflow {
     added?: number;
     removed?: number;
     dropped?: DropReasons;
+    extraction?: "llm" | "mixed" | "heuristic"; // how rows were built; not "llm" means some pages fell back to keywords
+    keyword_pages?: number; // pages matched by keywords because the AI was unavailable (out of `raw`)
   };
   error: string | null;
   created_at: string;

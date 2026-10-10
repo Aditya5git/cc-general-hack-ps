@@ -163,7 +163,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
     await logEvent(id, "extract", `Extracting structured "${work.entity}" rows…`);
     let sync = Promise.resolve(); // batches finish concurrently; apply their snapshots in order
     let lastLive = 0;
-    const { rows, mode } = await extractAll(work, raw, async (done, total, note, rowsSoFar) => {
+    const { rows, mode, keywordItems } = await extractAll(work, raw, async (done, total, note, rowsSoFar) => {
       await assertNotCancelled(id, stats.run_started_at); // throwing here stops the remaining batches
       if (note) await logEvent(id, "extract", note, "warn");
       await sql`UPDATE workflows SET progress = ${45 + Math.round((done / total) * 40)}, updated_at = now() WHERE id = ${id}`;
@@ -181,6 +181,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
       await sync;
     });
     let llmOnly = mode === "llm";
+    let keywordPages = keywordItems;
     stats.extracted = rows.length;
     await logEvent(id, "extract", `Extracted ${rows.length} candidate rows (${mode} extraction)`, "success");
 
@@ -204,12 +205,16 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
           if (note) await logEvent(id, "extract", note, "warn");
         });
         llmOnly &&= more.mode === "llm";
+        keywordPages += more.keywordItems;
         rows.push(...more.rows);
         ({ clean, invalid, duplicates, reasons, relaxed } = validateAndDedupe(work, rows));
         await logEvent(id, "extract", `Extra search added ${more.rows.length} candidate rows`, "success");
       }
     }
     stats.extracted = rows.length;
+    // saved for the UI's "AI was unavailable for N pages" notice; the log line alone was easy to miss
+    stats.keyword_pages = keywordPages;
+    stats.extraction = keywordPages === 0 ? "llm" : keywordPages >= (stats.raw ?? 0) ? "heuristic" : "mixed";
     Object.assign(stats, { invalid, duplicates, valid: clean.length, dropped: reasons });
     const drops = describeDrops(reasons, identityField(work));
     const flagged = Object.entries(reasons.failed_filters).map(([f, n]) => `${n} marked ✗ for "${f}"`).join(" · ");

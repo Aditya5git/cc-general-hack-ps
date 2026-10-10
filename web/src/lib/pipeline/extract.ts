@@ -259,7 +259,7 @@ export async function extractAll(
   plan: WorkflowPlan,
   items: RawItem[],
   onProgress: (done: number, total: number, note?: string, rowsSoFar?: Extracted[]) => Promise<void>,
-): Promise<{ rows: Extracted[]; mode: "llm" | "heuristic" | "mixed" }> {
+): Promise<{ rows: Extracted[]; mode: "llm" | "heuristic" | "mixed"; keywordItems: number }> {
   const batches: RawItem[][] = [];
   const BATCH = batchSize();
   for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
@@ -314,5 +314,5 @@ export async function extractAll(
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
   const mode = keywordItems === 0 ? "llm" : keywordItems >= items.length ? "heuristic" : "mixed";
-  return { rows, mode };
+  return { rows, mode, keywordItems };
 }
