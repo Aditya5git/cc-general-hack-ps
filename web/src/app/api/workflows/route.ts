@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { failStuckWorkflows, sql } from "@/lib/db";
+import { failStuckWorkflows, overUsageLimit, sql } from "@/lib/db";
 import { createWorkflow } from "@/lib/workflows";
 import { requireUser } from "@/lib/auth/access";
 import { blockedReason } from "@/lib/pipeline/safety";
@@ -26,6 +26,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Describe the data you need (at least a few words)." }, { status: 400 });
   const blocked = blockedReason(prompt);
   if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
+  const limited = await overUsageLimit(user.id, "run");
+  if (limited) return NextResponse.json({ error: limited }, { status: 429 });
   const id = await createWorkflow(prompt.trim().slice(0, 2000), { review: review === true, ownerId: user.id });
   return NextResponse.json({ id });
 }

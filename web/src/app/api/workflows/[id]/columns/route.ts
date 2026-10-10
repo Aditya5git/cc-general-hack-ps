@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sql } from "@/lib/db";
+import { overUsageLimit, sql } from "@/lib/db";
 import { llmJSON } from "@/lib/llm";
 import { WHY_KEY, type FieldSpec, type WorkflowPlan } from "@/lib/types";
 import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
@@ -46,6 +46,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const records = await sql`SELECT id, data, source_url FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id LIMIT ${MAX_ROWS}`;
   if (!records.length) return NextResponse.json({ error: "No records to enrich." }, { status: 400 });
+  const limited = await overUsageLimit(access.user.id, "ai");
+  if (limited) return NextResponse.json({ error: limited }, { status: 429 });
 
   const name = columnName(q, new Set(plan.fields.map((f) => f.name)));
   const cols = plan.fields.map((f) => f.name);

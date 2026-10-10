@@ -38,6 +38,23 @@ export async function setStatus(
     WHERE id = ${workflowId} AND (status <> 'cancelled' OR ${status} = 'queued')`;
 }
 
+/**
+ * Start a run only if the workflow is still in one of `from`: check and update are one statement, so of two
+ * clicks (or tabs) landing together exactly one wins. Returns false for the loser; send it a 409.
+ */
+export async function claimRun(workflowId: string, from: WorkflowStatus[], to: WorkflowStatus, progress: number, plan?: unknown) {
+  const rows = await sql`UPDATE workflows SET
+      status = ${to},
+      progress = ${progress},
+      plan = COALESCE(${plan ? JSON.stringify(plan) : null}::jsonb, plan),
+      error = NULL,
+      updated_at = now(),
+      finished_at = NULL
+    WHERE id = ${workflowId} AND status = ANY(${from})
+    RETURNING id`;
+  return rows.length > 0;
+}
+
 export class CancelledError extends Error {
   constructor() {
     super("Stopped by user");
@@ -59,4 +76,27 @@ export async function failStuckWorkflows(minutes = 8) {
   await sql`UPDATE workflows SET status = 'failed', progress = 100, finished_at = now(), updated_at = now(),
       error = 'This run was interrupted (the server restarted or timed out). Use Rerun or Refresh to try again.'
     WHERE status = ANY(${RUNNING}) AND updated_at < now() - make_interval(mins => ${minutes})`;
+}
+
+// Hourly caps per user. "run" = new workflow, Rerun or Refresh; "ai" = Ask question or AI column.
+// RUN_LIMIT_PER_HOUR / AI_LIMIT_PER_HOUR override the defaults (e.g. raise them for demo rehearsals).
+const hourly = (env: string, fallback: number) => Math.max(Math.floor(Number(process.env[env])) || fallback, 1);
+const LIMITS = { run: () => hourly("RUN_LIMIT_PER_HOUR", 5), ai: () => hourly("AI_LIMIT_PER_HOUR", 30) };
+const LIMIT_LABEL = { run: "runs", ai: "AI questions and columns" } as const;
+
+/**
+ * Count one use of `kind` for this user, or return a friendly message if they're at the hourly cap (send it as a
+ * 429). Check and insert are one statement; two requests landing at the same instant can still both get through.
+ */
+export async function overUsageLimit(userId: string, kind: keyof typeof LIMITS): Promise<string | null> {
+  const max = LIMITS[kind]();
+  const taken = await sql`INSERT INTO usage_events (user_id, kind)
+    SELECT ${userId}, ${kind}
+    WHERE (SELECT count(*) FROM usage_events
+           WHERE user_id = ${userId} AND kind = ${kind} AND created_at > now() - interval '1 hour') < ${max}
+    RETURNING id`;
+  if (taken.length) return null;
+  const [{ mins }] = await sql`SELECT greatest(1, ceil(extract(epoch FROM min(created_at) + interval '1 hour' - now()) / 60))::int AS mins
+    FROM usage_events WHERE user_id = ${userId} AND kind = ${kind} AND created_at > now() - interval '1 hour'`;
+  return `You've reached the limit of ${max} ${LIMIT_LABEL[kind]} per hour. Try again in about ${mins ?? 60} minute${mins === 1 ? "" : "s"}.`;
 }

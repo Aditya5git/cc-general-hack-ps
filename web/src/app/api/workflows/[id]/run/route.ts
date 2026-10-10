@@ -1,5 +1,5 @@
 import { after, NextResponse } from "next/server";
-import { logEvent, setStatus, sql } from "@/lib/db";
+import { claimRun, logEvent, sql } from "@/lib/db";
 import { executePlan } from "@/lib/pipeline/run";
 import { applyPlanEdits } from "@/lib/pipeline/planner";
 import type { WorkflowPlan } from "@/lib/types";
@@ -22,7 +22,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }
-  await setStatus(id, "collecting", 15, { plan });
+  if (!(await claimRun(id, ["review"], "collecting", 15, plan)))
+    return NextResponse.json({ error: "This workflow isn't waiting for review." }, { status: 409 });
   await logEvent(id, "plan", `Plan approved: ${plan.fields.length} columns, ${plan.sources.length} sources, ${plan.filters.length} filters`, "success");
   after(() => executePlan(id, plan));
   return NextResponse.json({ ok: true });

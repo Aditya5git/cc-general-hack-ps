@@ -132,6 +132,8 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
       await fetchJSON(`/api/workflows/${id}/refresh`, { method: "POST" });
       setCited(null);
       setPollKey((k) => k + 1);
+      // stay disabled a few seconds so a second click can't land before polling shows the run started
+      await new Promise((r) => setTimeout(r, 3000));
     } catch (e) {
       alert(e instanceof Error ? e.message : "Refresh failed");
     } finally {
@@ -324,7 +326,12 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
                 : w.error || "An unknown error occurred."}
             </p>
           </div>
-          <button type="button" onClick={w.plan && canEdit ? refresh : rerun} className="h-7 shrink-0 rounded-md bg-zinc-50 px-2.5 text-[12.5px] font-medium text-zinc-950 hover:bg-zinc-200">
+          <button
+            type="button"
+            onClick={w.plan && canEdit ? refresh : rerun}
+            disabled={busy !== null}
+            className="h-7 shrink-0 rounded-md bg-zinc-50 px-2.5 text-[12.5px] font-medium text-zinc-950 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             {w.status === "cancelled" ? "Resume" : "Try again"}
           </button>
         </div>
