@@ -204,6 +204,8 @@ const SYNONYMS: Record<string, string[]> = {
   posted_at: ["posted_at", "published_at", "created_at", "updated_at"],
 };
 
+const UNIT_ENDINGS = new Set(["usd", "inr", "eur", "gbp", "pct", "percent", "count", "num", "number", "total", "amount", "value"]);
+const KIND_ENDINGS = new Set(["name", "title", "url", "link", "id"]);
 const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const filled = (v: unknown) => v != null && v !== "" && !(Array.isArray(v) && !v.length);
 
@@ -213,9 +215,21 @@ const filled = (v: unknown) => v != null && v !== "" && !(Array.isArray(v) && !v
  * name...); among those, the one sharing the most words wins. job_title → title, never job_type.
  */
 function sourceKeyFor(column: string, src: Record<string, unknown>): string | undefined {
-  const direct = [column, ...(SYNONYMS[column] ?? [])].find((k) => filled(src[k]));
+  const lookup = (name: string) => [name, ...(SYNONYMS[name] ?? [])].find((k) => filled(src[k]));
+  const direct = lookup(column);
   if (direct) return direct;
-  const cw = words(column);
+  // a unit ending only says how the value is written: market_cap_usd is market_cap, never price_usd
+  let cw = words(column);
+  while (cw.length > 1 && UNIT_ENDINGS.has(cw[cw.length - 1])) cw = cw.slice(0, -1);
+  const base = cw.join("_");
+  const unitless = base !== column && lookup(base);
+  if (unitless) return unitless;
+  // "<thing>_name / _title / _url" is the thing itself when the item has it: company_name → company,
+  // author_name → author, website_url → website (homepage), before the generic name/title/url synonyms
+  if (cw.length > 1 && KIND_ENDINGS.has(cw[cw.length - 1])) {
+    const head = lookup(cw.slice(0, -1).join("_"));
+    if (head) return head;
+  }
   const attr = cw[cw.length - 1];
   const tail = SYNONYMS[attr]?.find((k) => filled(src[k])); // e.g. hq_location → location synonyms
   if (tail) return tail;
