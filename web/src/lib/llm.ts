@@ -49,6 +49,17 @@ export class LLMError extends Error {
 }
 
 // busy, out of credits, or this provider's key is bad: another provider can still answer
+/** The model answered but the answer can't be used: cut off at maxTokens, or not valid JSON. `partial` is the raw text. */
+export class LLMOutputError extends LLMError {
+  constructor(
+    message: string,
+    readonly partial: string,
+    readonly truncated: boolean,
+  ) {
+    super(message, null, false);
+  }
+}
+
 const busy = (status: number) => [401, 402, 403, 408, 429].includes(status) || status >= 500;
 
 // A provider that just said "rate limited / out of credits" is skipped for a while, so later calls in the
@@ -77,7 +88,8 @@ async function fail(label: string, res: Response): Promise<never> {
   throw new LLMError(`${label} ${res.status}: ${(await res.text()).slice(0, 200)}`, res.status, busy(res.status));
 }
 
-type Call = (sys: string, user: string, maxTokens: number, timeoutMs: number) => Promise<string>;
+/** `truncated`: the provider stopped because it hit maxTokens, so the JSON is probably incomplete. */
+type Call = (sys: string, user: string, maxTokens: number, timeoutMs: number) => Promise<{ text: string; truncated: boolean }>;
 
 const anthropic: Call = async (sys, user, maxTokens, timeoutMs) => {
   const res = await post(
@@ -90,7 +102,7 @@ const anthropic: Call = async (sys, user, maxTokens, timeoutMs) => {
   if (!res.ok) await fail("Anthropic", res);
   const body = await res.json();
   count(true, body.usage?.input_tokens, body.usage?.output_tokens);
-  return body.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
+  return { text: body.content?.find((b: { type: string }) => b.type === "text")?.text ?? "", truncated: body.stop_reason === "max_tokens" };
 };
 
 const openaiCompatible =
@@ -124,7 +136,7 @@ const openaiCompatible =
     if (!res.ok) await fail(LABEL[p], res);
     const body = await res.json();
     count(true, body.usage?.prompt_tokens, body.usage?.completion_tokens);
-    return body.choices?.[0]?.message?.content ?? "";
+    return { text: body.choices?.[0]?.message?.content ?? "", truncated: body.choices?.[0]?.finish_reason === "length" };
   };
 
 /** Gemini tries the preferred model, then lighter ones (separate quotas) when Google reports overload or limits. */
@@ -154,7 +166,8 @@ const gemini: Call = async (sys, user, maxTokens, timeoutMs) => {
       const body = await res.json();
       const u = body.usageMetadata ?? {};
       count(true, u.promptTokenCount, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0));
-      return body.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+      const c = body.candidates?.[0];
+      return { text: c?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "", truncated: c?.finishReason === "MAX_TOKENS" };
     }
     last = await fail(`Gemini ${model}`, res).catch((e: LLMError) => e);
     if (![404, 429, 500, 503].includes(res.status)) break;
@@ -181,8 +194,8 @@ function parseJSON<T>(text: string): T {
 
 /**
  * One JSON completion. Tries each configured provider in order, moving on only when one is busy (rate limit,
- * overload, out of credits, timeout); a bad request or unparseable answer throws straight away. `timeoutMs`
- * applies to each attempt.
+ * overload, out of credits, timeout); a bad request throws straight away, and an answer that was cut off or
+ * isn't valid JSON throws an LLMOutputError carrying the raw text. `timeoutMs` applies to each attempt.
  */
 export async function llmJSON<T>(system: string, user: string, maxTokens = 4096, opts: { timeoutMs?: number } = {}): Promise<T | null> {
   const providers = llmProviders();
@@ -194,9 +207,9 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096,
   const errors: LLMError[] = [];
   // all cooling down: try them anyway rather than fail without asking
   for (const p of ready.length ? ready : providers) {
-    let text: string;
+    let answer: { text: string; truncated: boolean };
     try {
-      text = await CALLS[p](sys, user, maxTokens, timeoutMs);
+      answer = await CALLS[p](sys, user, maxTokens, timeoutMs);
     } catch (e) {
       if (!(e instanceof LLMError) || !e.retryable) throw e;
       coolingUntil.set(p, Date.now() + cooldownMs(e));
@@ -204,7 +217,12 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096,
       continue;
     }
     coolingUntil.delete(p);
-    return parseJSON<T>(text);
+    if (answer.truncated) throw new LLMOutputError(`${LABEL[p]} answer was cut off at ${maxTokens} tokens`, answer.text, true);
+    try {
+      return parseJSON<T>(answer.text);
+    } catch {
+      throw new LLMOutputError(`${LABEL[p]} returned invalid JSON`, answer.text, false);
+    }
   }
   const last = errors[errors.length - 1];
   throw new LLMError(errors.map((e) => e.message).join(" · then "), last.status, true);

@@ -1,4 +1,4 @@
-import { LLMError, llmJSON } from "../llm";
+import { LLMError, LLMOutputError, llmJSON } from "../llm";
 import type { RawItem, WorkflowPlan } from "../types";
 import { focusText, planTerms } from "./focus";
 import { UNTRUSTED_RULE, untrusted } from "./untrusted";
@@ -60,7 +60,7 @@ ${plan.filters.length ? plan.filters.map((c, i) => `${i + 1}. ${c}`).join("\n") 
 Rules:
 - ${UNTRUSTED_RULE}
 - Only use facts present in the item; never invent values. Use null when unknown.
-- A structured item (with fields) usually yields one row. A web page may contain several ${plan.entity}s (e.g. a list of sponsors) - emit one row per real entity found, max 15 per item.
+- A structured item (with fields) usually yields one row. A web page may contain several ${plan.entity}s (e.g. a list of sponsors) - emit one row per real entity found, max ${MAX_ROWS_PER_PAGE} per item (the most relevant ones).
 - Skip items/rows that are irrelevant to the intent. Do NOT skip a row just because a constraint is unmet or not stated; report that in "checks" instead.
 - Each row must BE a "${plan.entity}" matching the subject of the intent. Matching only the constraints (e.g. it mentions the right city or date) is NOT a match: an article, event or person that merely mentions the place is not a ${plan.entity}. Skip it, or give relevance 0.
 - "relevance" 0-1 = how well the row matches the subject of the intent; constraints are judged separately in "checks".
@@ -72,16 +72,22 @@ Rules:
 - "checks" = one entry per constraint, in order: true if the item shows it is met, false if it shows it is violated, null if the item doesn't say. Use [] when there are no constraints.
 - Location constraints: a row located in a different city/state/country is false. A remote role counts as met only if the constraint itself allows remote AND the role is open to people in the named place (e.g. "Remote, Europe only" fails "India or remote").
 Return {"rows": [{"item": <ITEM number>, "relevance": number, "why": string, "quote": string, "checks": [true|false|null], "data": {<schema fields>}}]}`;
-  const res = await llmJSON<{
-    rows: { item: number; relevance: number; why?: string; quote?: string; checks?: unknown[]; data: Record<string, unknown> }[];
-  }>(
-    system,
-    items.map((it, i) => describeItem(i, it, planTerms(plan))).join("\n\n"),
-    Math.max(2500, items.length * 450), // room for every row's fields, why, quote and checks
-  );
+  const res = await llmJSON<{ rows: ModelRow[] }>(system, items.map((it, i) => describeItem(i, it, planTerms(plan))).join("\n\n"), outputBudget(items));
   if (!res) return null;
-  return (res.rows ?? [])
-    .filter((r) => r && r.data && items[r.item])
+  return toExtracted(res.rows ?? [], items);
+}
+
+type ModelRow = { item: number; relevance: number; why?: string; quote?: string; checks?: unknown[]; data: Record<string, unknown> };
+
+const MAX_ROWS_PER_PAGE = 8;
+
+/** Output room for a batch: about one row per structured item, up to MAX_ROWS_PER_PAGE rows (~220 tokens each) per page. */
+const outputBudget = (items: RawItem[]) =>
+  Math.min(12_000, Math.max(2500, 400 + items.reduce((n, it) => n + (PAGE_SOURCES.has(it.source) ? MAX_ROWS_PER_PAGE * 220 : 300), 0)));
+
+function toExtracted(rows: ModelRow[], items: RawItem[]): Extracted[] {
+  return rows
+    .filter((r) => r && r.data && Number.isInteger(r.item) && items[r.item])
     .map((r) => ({
       data: r.data,
       item: items[r.item],
@@ -90,6 +96,66 @@ Return {"rows": [{"item": <ITEM number>, "relevance": number, "why": string, "qu
       checks: Array.isArray(r.checks) ? r.checks.map((c) => (typeof c === "boolean" ? c : null)) : undefined,
       ...verifyQuote(r.quote, items[r.item]),
     }));
+}
+
+/** Complete row objects from an answer that was cut off: every {...} that closed inside the "rows" array. */
+export function salvageRows(text: string): ModelRow[] {
+  const key = text.indexOf('"rows"');
+  const start = key < 0 ? -1 : text.indexOf("[", key);
+  if (start < 0) return [];
+  const out: ModelRow[] = [];
+  let depth = 0;
+  let objStart = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = start + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") {
+      if (depth++ === 0) objStart = i;
+    } else if (ch === "}") {
+      if (--depth === 0) {
+        try {
+          out.push(JSON.parse(text.slice(objStart, i + 1)));
+        } catch {
+          // a malformed row: skip it, keep the rest
+        }
+      }
+    } else if (ch === "]" && depth === 0) break;
+  }
+  return out;
+}
+
+/**
+ * LLM rows for a batch, recovering from answers that were cut off or broken: the batch is retried once as two
+ * halves, and a half that still fails keeps its complete rows. `missed` = items the answer never reached, for the
+ * keyword fallback. Null when no LLM is configured.
+ */
+async function llmExtract(plan: WorkflowPlan, items: RawItem[], notes: string[], retry = true): Promise<{ rows: Extracted[]; missed: RawItem[] } | null> {
+  try {
+    const rows = await llmBatch(plan, items);
+    return rows && { rows, missed: [] };
+  } catch (e) {
+    if (!(e instanceof LLMOutputError)) throw e;
+    const what = e.truncated ? "was cut off" : "wasn't valid JSON";
+    if (retry && items.length > 1) {
+      notes.push(`The AI answer for ${items.length} pages ${what}, so they were retried in two smaller batches`);
+      const mid = Math.ceil(items.length / 2);
+      // one half after the other, so a retry never adds to the number of calls in flight
+      const a = await llmExtract(plan, items.slice(0, mid), notes, false);
+      const b = await llmExtract(plan, items.slice(mid), notes, false);
+      return { rows: [...(a?.rows ?? []), ...(b?.rows ?? [])], missed: [...(a?.missed ?? []), ...(b?.missed ?? [])] };
+    }
+    const rows = toExtracted(salvageRows(e.partial), items);
+    const reached = rows.reduce((n, r) => Math.max(n, items.indexOf(r.item)), -1);
+    const missed = items.slice(reached + 1);
+    notes.push(`The AI answer ${what}: kept ${rows.length} complete row${rows.length === 1 ? "" : "s"}, ${missed.length} page${missed.length === 1 ? "" : "s"} matched by keywords`);
+    return { rows, missed };
+  }
 }
 
 function verifyQuote(quote: unknown, it: RawItem): Pick<Extracted, "quote" | "quoteVerified"> {
@@ -160,7 +226,7 @@ export async function extractAll(
 
   const rows: Extracted[] = [];
   let llmAvailable = true;
-  let llmBatches = 0;
+  let keywordItems = 0; // items that went to the keyword fallback, for the run's extraction mode
   let done = 0;
   let idx = 0;
   let stopped = false; // set when onProgress throws (e.g. the user cancelled): no new LLM calls start after that
@@ -169,10 +235,14 @@ export async function extractAll(
       const batch = batches[idx++];
       let out: Extracted[] | null = null;
       if (llmAvailable) {
+        const notes: string[] = [];
         try {
-          out = await llmBatch(plan, batch);
-          if (out === null) llmAvailable = false;
-          else llmBatches++;
+          const res = await llmExtract(plan, batch, notes);
+          if (res === null) llmAvailable = false;
+          else {
+            out = [...res.rows, ...res.missed.map((it) => heuristicMap(plan, it, kw))];
+            keywordItems += res.missed.length;
+          }
         } catch (e) {
           const msg = (e as Error).message;
           // llmJSON already tried every provider: on a rate limit, empty balance or bad key, stop asking for
@@ -182,13 +252,15 @@ export async function extractAll(
             ? llmAvailable && `AI limit reached on every provider (${msg.slice(0, 120)}), so the remaining pages are matched by keywords`
             : `LLM batch failed (${msg.slice(0, 120)}), using heuristic mapping`;
           if (quotaHit) llmAvailable = false;
-          if (note)
-            await onProgress(done, batches.length, note).catch((err) => {
-              stopped = true;
-              throw err;
-            });
+          if (note) notes.push(note);
         }
+        for (const note of notes)
+          await onProgress(done, batches.length, note).catch((err) => {
+            stopped = true;
+            throw err;
+          });
       }
+      if (!out) keywordItems += batch.length;
       rows.push(...(out ?? batch.map((it) => heuristicMap(plan, it, kw))));
       done++;
       try {
@@ -200,6 +272,6 @@ export async function extractAll(
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
-  const mode = llmBatches === batches.length ? "llm" : llmBatches === 0 ? "heuristic" : "mixed";
+  const mode = keywordItems === 0 ? "llm" : keywordItems >= items.length ? "heuristic" : "mixed";
   return { rows, mode };
 }
