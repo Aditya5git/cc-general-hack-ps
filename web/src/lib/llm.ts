@@ -10,6 +10,15 @@ export function llmProvider(): "openrouter" | "anthropic" | "openai" | "gemini" 
   return null;
 }
 
+/** Running totals for this process, read by the eval harness to report requests and tokens per prompt. */
+export const llmUsage = { requests: 0, failed: 0, input: 0, output: 0 };
+const count = (ok: boolean, input = 0, output = 0) => {
+  llmUsage.requests++;
+  if (!ok) llmUsage.failed++;
+  llmUsage.input += input;
+  llmUsage.output += output;
+};
+
 function parseJSON<T>(text: string): T {
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   try {
@@ -43,8 +52,12 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096)
         messages: [{ role: "user", content: user }],
       }),
     });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      count(false);
+      throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
     const body = await res.json();
+    count(true, body.usage?.input_tokens, body.usage?.output_tokens);
     const text = body.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
     return parseJSON<T>(text);
   }
@@ -71,14 +84,19 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096)
         }),
       });
     let res = await call(maxTokens);
+    if (res.status === 402) count(false);
     // OpenRouter answers 402 when the credit balance can't cover max_tokens; retry with what it can afford.
     if (res.status === 402) {
       const affordable = Number((await res.text()).match(/afford (\d+)/)?.[1] ?? 0);
       if (affordable >= 400) res = await call(Math.min(maxTokens, affordable - 50));
       else throw new Error("OpenRouter 402: out of credits");
     }
-    if (!res.ok) throw new Error(`${or ? "OpenRouter" : "OpenAI"} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      count(false);
+      throw new Error(`${or ? "OpenRouter" : "OpenAI"} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
     const body = await res.json();
+    count(true, body.usage?.prompt_tokens, body.usage?.completion_tokens);
     return parseJSON<T>(body.choices?.[0]?.message?.content ?? "");
   }
 
@@ -104,10 +122,16 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096)
     });
     if (res.ok) {
       const body = await res.json();
+      const u = body.usageMetadata ?? {};
+      count(true, u.promptTokenCount, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0));
       return parseJSON<T>(body.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "");
     }
+    count(false);
     lastErr = `Gemini ${model} ${res.status}: ${(await res.text()).slice(0, 200)}`;
     if (![404, 429, 500, 503].includes(res.status)) break;
+    // LLM_NO_FALLBACK=1 (eval harness): a rate limit stops here instead of fanning out into 4 requests;
+    // overload (503) still moves on to a lighter model.
+    if (res.status === 429 && process.env.LLM_NO_FALLBACK) break;
   }
   throw new Error(lastErr);
 }

@@ -42,3 +42,6 @@ next-env.d.ts
 
 # evaluation run outputs (labels are worth committing deliberately, not by accident)
 /eval/out/
+
+# fetched pages and plans saved by `pnpm eval` for --replay
+/eval/cache/
