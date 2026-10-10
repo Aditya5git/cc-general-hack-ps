@@ -175,7 +175,7 @@ export function PlanEditor({ workflowId, plan, onStarted }: { workflowId: string
         {/* Conditions */}
         <div>
           <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-medium text-zinc-300">
-            <Filter className="h-3.5 w-3.5 text-zinc-500" aria-hidden /> Every row must
+            <Filter className="h-3.5 w-3.5 text-zinc-500" aria-hidden /> Check each row for
           </h3>
           <ul className="space-y-1">
             {filters.map((f, i) => (
@@ -192,7 +192,7 @@ export function PlanEditor({ workflowId, plan, onStarted }: { workflowId: string
                 </button>
               </li>
             ))}
-            {!filters.length && <li className="text-[12.5px] text-zinc-500">No conditions. Every relevant row is kept.</li>}
+            {!filters.length && <li className="text-[12.5px] text-zinc-500">No conditions.</li>}
           </ul>
           <form
             className="mt-2.5 flex gap-1.5"

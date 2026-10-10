@@ -7,9 +7,9 @@ import {
   ArrowRight,
   ArrowUp,
   Briefcase,
-  Building2,
   Coins,
   CornerDownLeft,
+  Database,
   GitBranch,
   Handshake,
   Loader2,
@@ -55,11 +55,11 @@ const USE_CASES = [
     columns: ["title", "points", "comments", "posted_at", "url"],
   },
   {
-    icon: Building2,
-    tag: "Companies",
-    title: "Company lists",
-    prompt: "Largest Indian IT services companies",
-    columns: ["name", "headquarters", "revenue", "website"],
+    icon: Database,
+    tag: "Open source",
+    title: "Tool landscape",
+    prompt: "Open-source vector databases on GitHub",
+    columns: ["name", "description", "stars", "language", "homepage"],
   },
 ];
 
@@ -112,7 +112,7 @@ export default function NewRequest() {
         <div className="relative z-10 mx-auto max-w-[720px] px-4 pb-4 pt-10 text-center sm:px-6 md:pt-16">
           <span className="pill mx-auto border border-line-strong bg-zinc-50/[0.03] text-zinc-300">
             <span className="mc-dot h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
-            Multi-agent · every row verified at the source
+            AI-planned pipeline
           </span>
           <h1 id="hero-title" className="mt-6 text-[36px] font-medium leading-[1.08] tracking-[-0.03em] text-zinc-50 sm:text-[52px]">
             Ask for data.

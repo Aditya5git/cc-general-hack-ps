@@ -56,8 +56,8 @@ export function Insights({ records, fields, criteria = [] }: { records: DataReco
     const charts: { title: string; sub?: string; bars: Bar[]; kind: "rank" | "dist" }[] = [];
     charts.push({ title: "Rows per source", bars: topCounts(records.map((r) => connectorLabel(r.source_name))), kind: "rank" });
     charts.push({
-      title: "Confidence",
-      sub: "rows per confidence band",
+      title: "Match score",
+      sub: "rows per match-score band",
       kind: "dist",
       bars: [
         ["< 50%", 0, 50],
@@ -74,8 +74,8 @@ export function Insights({ records, fields, criteria = [] }: { records: DataReco
     });
     if (criteria.length && withChecks.length)
       charts.push({
-        title: "Criteria verified",
-        sub: `rows where the source confirms each condition (of ${withChecks.length})`,
+        title: "Criteria met (AI-judged)",
+        sub: `the AI's reading of each condition (of ${withChecks.length})`,
         kind: "rank",
         bars: criteria.map((c, i) => ({
           label: c,
@@ -123,9 +123,9 @@ export function Insights({ records, fields, criteria = [] }: { records: DataReco
     <div>
       <div className="glass grid grid-cols-2 overflow-hidden rounded-lg md:grid-cols-4">
         <Tile label="Rows" value={data.n.toLocaleString()} />
-        <Tile label="Avg. confidence" value={`${Math.round(data.avgConf)}%`} />
+        <Tile label="Avg. match score" value={`${Math.round(data.avgConf)}%`} hint="Heuristic score: relevance + filled columns. Not a probability." />
         <Tile
-          label="All criteria verified"
+          label="All criteria met (AI-judged)"
           value={data.withChecks ? `${Math.round((data.allMet / data.withChecks) * 100)}%` : "—"}
           sub={data.withChecks ? `${data.allMet} of ${data.withChecks} rows` : "no criteria in request"}
         />
@@ -140,10 +140,10 @@ export function Insights({ records, fields, criteria = [] }: { records: DataReco
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Tile({ label, value, sub, hint }: { label: string; value: string; sub?: string; hint?: string }) {
   return (
     <div className="border-line px-4 py-3 [&:not(:last-child)]:border-r">
-      <div className="text-[11.5px] text-zinc-500">{label}</div>
+      <div className="text-[11.5px] text-zinc-500" title={hint}>{label}</div>
       <div className="mt-1 text-[22px] font-semibold tabular-nums text-zinc-100">{value}</div>
       {sub && <div className="text-[11px] text-zinc-600">{sub}</div>}
     </div>
