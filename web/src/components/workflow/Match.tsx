@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { BadgeCheck, Check, HelpCircle, Quote, X } from "lucide-react";
-import { CHECKS_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DataRecord, type FieldSpec } from "@/lib/types";
+import { CHECKS_KEY, METHOD_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DataRecord, type FieldSpec } from "@/lib/types";
 
 export const whyOf = (r: DataRecord) => (typeof r.data[WHY_KEY] === "string" ? (r.data[WHY_KEY] as string) : "");
 export const checksOf = (r: DataRecord) => (Array.isArray(r.data[CHECKS_KEY]) ? (r.data[CHECKS_KEY] as (boolean | null)[]) : []);
@@ -89,6 +89,7 @@ export function Evidence({ record, fields }: { record: DataRecord; fields: Field
   const quote = typeof record.data[QUOTE_KEY] === "string" ? (record.data[QUOTE_KEY] as string) : "";
   if (!quote) return null;
   const verified = record.data[QUOTE_OK_KEY] === true;
+  const keyword = record.data[METHOD_KEY] === "keyword";
   const terms = fields
     .filter((f) => f.type !== "url")
     .flatMap((f) => {
@@ -103,10 +104,16 @@ export function Evidence({ record, fields }: { record: DataRecord; fields: Field
           className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-normal ${
             verified ? "bg-success/15 text-success-soft" : "bg-white/[0.05] text-zinc-400"
           }`}
-          title={verified ? "This exact text was found in the page DataPilot fetched" : "Couldn't match this text word-for-word in the fetched page"}
+          title={
+            keyword
+              ? "The AI was unavailable, so this sentence was picked because it has the most words from your request"
+              : verified
+                ? "This exact text was found in the page DataPilot fetched"
+                : "Couldn't match this text word-for-word in the fetched page"
+          }
         >
           {verified ? <BadgeCheck className="h-3 w-3" /> : <HelpCircle className="h-3 w-3" />}
-          {verified ? "Found word-for-word in source" : "Paraphrased, not verbatim"}
+          {keyword ? "Picked by keyword match, not by AI" : verified ? "Found word-for-word in source" : "Paraphrased, not verbatim"}
         </span>
       </div>
       <blockquote className="mt-2 border-l-2 border-zinc-600 pl-3 text-sm italic leading-relaxed text-zinc-300">“{highlight(quote, terms)}”</blockquote>

@@ -117,6 +117,7 @@ export const WHY_KEY = "_why"; // string: one-line evidence for the match
 export const CHECKS_KEY = "_checks"; // (boolean | null)[] aligned with plan.filters
 export const QUOTE_KEY = "_quote"; // verbatim excerpt from the source backing the row
 export const QUOTE_OK_KEY = "_quote_verified"; // true when the excerpt was found in the fetched text
+export const METHOD_KEY = "_method"; // "keyword" when the row came from the keyword fallback instead of the AI
 
 export interface DataRecord {
   id: number;

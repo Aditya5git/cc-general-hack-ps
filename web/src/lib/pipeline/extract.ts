@@ -1,6 +1,6 @@
 import { LLMError, LLMOutputError, llmJSON } from "../llm";
 import type { RawItem, WorkflowPlan } from "../types";
-import { focusText, planTerms } from "./focus";
+import { focusText, keywordTerms, planTerms } from "./focus";
 import { identityField } from "./validate";
 import { UNTRUSTED_RULE, untrusted } from "./untrusted";
 
@@ -12,6 +12,7 @@ export interface Extracted {
   checks?: (boolean | null)[]; // per plan.filters entry: met / violated / unknown
   quote?: string; // excerpt copied from the item as evidence
   quoteVerified?: boolean; // the excerpt really occurs in the item (checked in code, not by the model)
+  method?: "keyword"; // built by the keyword fallback, not the AI
 }
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9$€£%.]+/g, " ").trim();
@@ -218,6 +219,10 @@ function sourceKeyFor(column: string, src: Record<string, unknown>): string | un
   return best?.key;
 }
 
+// A page whose title announces a list ("Top 50 IT companies", "List of unicorns") holds many entities; only the
+// AI can pull them out, so without it the page itself must not become a row.
+const LIST_PAGE = /\b(top|best|largest|biggest|leading|list|lists|ranking|rankings)\b|^\s*\d+\s|\b(ten|twenty|fifty|hundred)\b/i;
+
 /** Heuristic mapping when no LLM is available. */
 function heuristicMap(plan: WorkflowPlan, it: RawItem, kw: string[]): Extracted {
   const src: Record<string, unknown> = { ...(it.fields ?? {}), title: it.fields?.title ?? it.title, url: it.fields?.url ?? it.url };
@@ -233,15 +238,19 @@ function heuristicMap(plan: WorkflowPlan, it: RawItem, kw: string[]): Extracted 
     data[f.name] = v;
   }
   const hay = `${it.title} ${it.text} ${JSON.stringify(it.fields ?? {})}`.toLowerCase();
-  const matched = kw.filter((k) => hay.includes(k));
+  const matched = kw.filter((k) => new RegExp(`(^|[^a-z0-9])${k.replace(/[+#.]/g, "\\$&")}`).test(hay));
+  // share of the request's keywords found; nothing matched → 0, below the validator's drop threshold
+  const listPage = PAGE_SOURCES.has(it.source) && LIST_PAGE.test(it.title);
   return {
     data,
     item: it,
-    relevance: kw.length ? 0.4 + 0.6 * (matched.length / kw.length) : 0.6,
+    relevance: listPage ? 0 : kw.length ? matched.length / kw.length : 0.5,
     why: matched.length ? `Mentions ${matched.map((k) => `"${k}"`).join(", ")} (keyword match)` : undefined,
+    method: "keyword",
+    // a sentence picked by keyword count is real text, but not evidence anyone checked: never "verified"
     ...(() => {
       const quote = bestSentence(it, kw);
-      return quote ? { quote, quoteVerified: true } : {};
+      return quote ? { quote, quoteVerified: false } : {};
     })(),
   };
 }
@@ -254,7 +263,7 @@ export async function extractAll(
   const batches: RawItem[][] = [];
   const BATCH = batchSize();
   for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH));
-  const kw = plan.intent.toLowerCase().split(/\W+/).filter((w) => w.length > 3).slice(0, 8);
+  const kw = keywordTerms(plan);
 
   const rows: Extracted[] = [];
   let llmAvailable = true;

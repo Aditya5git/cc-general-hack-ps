@@ -1,4 +1,4 @@
-import { CHECKS_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DropReasons, type FieldSpec, type WorkflowPlan } from "../types";
+import { CHECKS_KEY, METHOD_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DropReasons, type FieldSpec, type WorkflowPlan } from "../types";
 import type { Extracted } from "./extract";
 
 export interface CleanRow {
@@ -99,6 +99,7 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
       data[QUOTE_KEY] = r.quote;
       data[QUOTE_OK_KEY] = !!r.quoteVerified;
     }
+    if (r.method) data[METHOD_KEY] = r.method;
     if (plan.filters.length && r.checks?.length)
       data[CHECKS_KEY] = plan.filters.map((_, i) => (typeof r.checks![i] === "boolean" ? r.checks![i] : null));
 

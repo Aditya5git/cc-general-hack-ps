@@ -9,6 +9,17 @@ const STOP = new Set(
     .split(" "),
 );
 
+// Words that say how much or how good, not what: they match almost any page, so keyword scoring ignores them.
+const FILLER = new Set(
+  "largest biggest top best leading list lists info information details data latest recent new popular famous good great various several many".split(" "),
+);
+
+/** The words that say what the user is after (intent + entity), for keyword matching when no LLM is available. */
+export function keywordTerms(plan: WorkflowPlan): string[] {
+  const words = `${plan.intent} ${plan.entity}`.toLowerCase().match(/[a-z0-9+#]{2,}/g) ?? [];
+  return [...new Set(words.filter((w) => !STOP.has(w) && !FILLER.has(w)))].slice(0, 8);
+}
+
 const PASSAGE_CHARS = 320;
 
 export function planTerms(plan: WorkflowPlan): string[] {
