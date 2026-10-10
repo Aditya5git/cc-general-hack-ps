@@ -212,6 +212,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const recordCount = detail.record_count ?? w.record_count ?? records.length;
   const sourcesOk = s.sources_ok ?? detail.sources.filter((x) => x.status === "ok").length;
   const sourcesFailed = s.sources_failed ?? detail.sources.filter((x) => x.status === "failed").length;
+  const sourcesTotal = sourcesOk + sourcesFailed;
 
   return (
     <div>
@@ -359,9 +360,13 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
 {w.status !== "review" && (
       <div className="glass mt-5 grid grid-cols-2 overflow-hidden rounded-lg md:grid-cols-4">
         <Stat label="Records" value={recordCount} sub={s.raw !== undefined ? `from ${s.raw} raw items` : undefined} />
-        <Stat label="Sources" value={<>{sourcesOk}<span className="text-zinc-600"> / {sourcesOk + sourcesFailed}</span></>} sub={sourcesFailed ? `${sourcesFailed} failed` : "all responded"} />
-        <Stat label="Duplicates merged" value={s.duplicates ?? 0} />
-        <Stat label="Invalid dropped" value={s.invalid ?? 0} />
+        <Stat
+          label="Sources"
+          value={running && !sourcesTotal ? "—" : <>{sourcesOk}<span className="text-zinc-600"> / {sourcesTotal}</span></>}
+          sub={running && !sourcesTotal ? undefined : sourcesFailed ? `${sourcesFailed} failed` : "all responded"}
+        />
+        <Stat label="Duplicates merged" value={running && s.duplicates === undefined ? "—" : (s.duplicates ?? 0)} />
+        <Stat label="Invalid dropped" value={running && s.invalid === undefined ? "—" : (s.invalid ?? 0)} />
       </div>
       )}
 
