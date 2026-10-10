@@ -11,18 +11,84 @@ export interface CleanRow {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function cleanValue(f: FieldSpec, v: unknown): unknown {
+// Values that mean "not given". Kept as text they would fill the cell, raise the row's score and stop a merge
+// from filling in the real value from another source.
+const EMPTY =
+  /^(n\/?a|null|none|nil|unknown|-+|—|–|tbd|tba|undisclosed|confidential|competitive|negotiable|varies|not (specified|disclosed|available|listed|provided|mentioned|stated|applicable)|see (description|website|listing))$/i;
+
+// Number words and suffixes: 120k, 1.5M, 2bn, 12 LPA (lakh per annum), 3 crore.
+const SCALE: [RegExp, number][] = [
+  [/^(k|thousand)$/, 1e3],
+  [/^(l|lac|lacs|lakh|lakhs|lpa)$/, 1e5],
+  [/^(m|mn|mm|million|millions)$/, 1e6],
+  [/^(cr|crore|crores)$/, 1e7],
+  [/^(b|bn|billion|billions)$/, 1e9],
+  [/^(t|tn|trillion|trillions)$/, 1e12],
+];
+
+/** "$120k" → 120000, "₹12 LPA" → 1200000, "120k-150k" → 120000 (lower bound), "1.234,56" → 1234.56; null if none. */
+export function parseNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  let s = v.toLowerCase().replace(/\b(usd|inr|eur|gbp|rs\.?|us)\b|[$€£₹]/g, " ");
+  s = s.replace(/\b(\d{1,3}(?:\.\d{3})+),(\d{1,2})\b/g, (_, a: string, b: string) => `${a.replace(/\./g, "")}.${b}`); // 1.234,56
+  const m = s.match(/(-?\d[\d,]*(?:\.\d+)?)\s*([a-z]+)?/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  const scale = m[2] ? SCALE.find(([re]) => re.test(m[2]))?.[1] ?? 1 : 1;
+  return Math.round(n * scale * 1e6) / 1e6;
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
+
+/**
+ * A date as YYYY-MM-DD, keeping the precision the source gave: "2015" stays "2015", "Mar 2024" becomes "2024-03".
+ * Dates without a time are read as calendar dates, so no timezone can move them a day. "3 days ago" is counted
+ * from today. Anything unreadable is kept as written.
+ */
+export function cleanDate(v: unknown, now = new Date()): string | null {
+  if (typeof v === "number") {
+    if (v >= 1000 && v <= 9999) return String(v); // a year, not a timestamp
+    const d = new Date(v < 1e12 ? v * 1000 : v);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+  const s = String(v).trim();
+  if (/^\d{4}(-\d{2}){0,2}$/.test(s)) return s;
+  const monthYear = s.match(/^([a-z]{3,9})\.?,? (\d{4})$/i);
+  if (monthYear) {
+    const t = Date.parse(`${monthYear[1]} 1, ${monthYear[2]}`);
+    if (!Number.isNaN(t)) return `${monthYear[2]}-${pad(new Date(t).getMonth() + 1)}`;
+  }
+  const ago = s.toLowerCase().match(/^(\d+|an?) (minute|hour|day|week|month|year)s? ago$/);
+  if (ago || /^(today|yesterday|just now)$/i.test(s)) {
+    const n = ago ? (/^\d/.test(ago[1]) ? Number(ago[1]) : 1) : /yesterday/i.test(s) ? 1 : 0;
+    const unit = ago?.[2] ?? "day";
+    const d = new Date(now);
+    if (unit === "year") d.setUTCFullYear(d.getUTCFullYear() - n);
+    else if (unit === "month") d.setUTCMonth(d.getUTCMonth() - n);
+    else d.setTime(d.getTime() - n * { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5 }[unit]!);
+    return d.toISOString().slice(0, 10);
+  }
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return s;
+  const d = new Date(t);
+  // a time with a zone (ISO "…Z" / "+05:30") is an instant: take its UTC date; otherwise it was parsed as local
+  // midnight, so read the local calendar date back
+  return /\d:\d{2}.*(z|[+-]\d{2}:?\d{2})$/i.test(s) ? d.toISOString().slice(0, 10) : ymd(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+export function cleanValue(f: FieldSpec, v: unknown): unknown {
   if (v == null) return null;
   if (typeof v === "string") {
     v = v.replace(/\s+/g, " ").trim();
-    if (v === "" || /^(n\/a|null|none|unknown|-)$/i.test(v as string)) return null;
+    if (v === "" || EMPTY.test((v as string).replace(/[.!]+$/, ""))) return null;
   }
   switch (f.type) {
-    case "number": {
-      if (typeof v === "number") return Number.isFinite(v) ? v : null;
-      const n = Number(String(v).replace(/[$,%\s]/g, ""));
-      return Number.isFinite(n) ? n : String(v);
-    }
+    case "number":
+      // null rather than raw text: a number column must sort and chart as numbers
+      return typeof v === "boolean" ? null : parseNumber(v);
     case "url": {
       const s = String(v);
       try {
@@ -32,15 +98,15 @@ function cleanValue(f: FieldSpec, v: unknown): unknown {
         return null;
       }
     }
-    case "email":
-      return EMAIL.test(String(v)) ? String(v).toLowerCase() : null;
-    case "date": {
-      const d = new Date(typeof v === "number" && v < 1e12 ? v * 1000 : (v as string));
-      return isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10);
+    case "email": {
+      const e = String(v).replace(/^mailto:/i, "");
+      return EMAIL.test(e) ? e.toLowerCase() : null;
     }
+    case "date":
+      return cleanDate(v);
     case "list":
-      if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 12);
-      return String(v).split(/[,;|]/).map((x) => x.trim()).filter(Boolean).slice(0, 12);
+      if (Array.isArray(v)) return v.map((x) => (typeof x === "object" && x ? JSON.stringify(x) : String(x)).trim()).filter(Boolean).slice(0, 12);
+      return String(v).split(/[;|]|,(?! [A-Z]{2}\b)/).map((x) => x.trim()).filter(Boolean).slice(0, 12);
     default:
       return typeof v === "object" ? JSON.stringify(v) : String(v).slice(0, 1000);
   }
@@ -64,8 +130,7 @@ function sortValue(v: unknown, type: FieldSpec["type"] | undefined): number | nu
     const t = Date.parse(String(v));
     return Number.isNaN(t) ? null : t;
   }
-  const n = Number(String(v).replace(/[$€£₹,%\s]/g, ""));
-  return Number.isFinite(n) ? n : null;
+  return parseNumber(v);
 }
 
 /**
