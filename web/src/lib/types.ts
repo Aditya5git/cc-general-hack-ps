@@ -70,6 +70,7 @@ export interface RawItem {
 export interface ConnectorResult {
   items: RawItem[];
   url?: string; // the request URL we hit (for the Sources tab)
+  warnings?: string[]; // fallbacks the user should see in the activity log, e.g. Firecrawl out of credits
 }
 
 /** Why rows were dropped during validation, for the activity log and the empty-table message. */

@@ -11,6 +11,7 @@ import {
   isAllowedByRobots,
   queryWords,
 } from "./http";
+import { friendlyReason } from "../errors";
 import { wikipedia } from "./apis";
 import { firecrawlEnabled, firecrawlScrape, firecrawlSearch } from "./firecrawl";
 import { assertPublicUrl } from "./safe-url";
@@ -138,6 +139,7 @@ async function fetchReadable(url: string, maxChars = 20_000): Promise<{ title: s
 }
 
 export async function webSearch(query: string, limit: number): Promise<ConnectorResult> {
+  const warnings: string[] = [];
   // Preferred: Firecrawl search returns rendered page content for each hit in one call.
   if (firecrawlEnabled()) {
     try {
@@ -156,6 +158,8 @@ export async function webSearch(query: string, limit: number): Promise<Connector
         };
     } catch (e) {
       console.warn("Firecrawl search failed, falling back to built-in search", e);
+      // results get worse without Firecrawl (e.g. out of credits), so say so in the activity log too
+      warnings.push(`Firecrawl search failed (${friendlyReason(e)}), so the built-in search was used`);
     }
   }
   const engines: [string, string, (q: string) => Promise<SearchHit[]>, boolean][] = [
@@ -187,13 +191,14 @@ export async function webSearch(query: string, limit: number): Promise<Connector
       const w = await wikipedia(query, limit);
       if (w.items.length) {
         console.warn(`web_search: search engines returned nothing for "${query}", used Wikipedia instead`);
-        return { items: w.items.map((i) => ({ ...i, source: "wikipedia" as const })), url: w.url };
+        return { items: w.items.map((i) => ({ ...i, source: "wikipedia" as const })), url: w.url, warnings };
       }
     } catch (e) {
       errors.push(`wikipedia: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (errors.length === engines.length) throw new Error(`web_search: all engines failed (${errors.join("; ")})`);
-    return { items: [], url: usedUrl };
+    if (errors.length === engines.length)
+      throw Object.assign(new Error(`web_search: all engines failed (${errors.join("; ")})`), { warnings });
+    return { items: [], url: usedUrl, warnings };
   }
   // dedupe by URL
   const seen = new Set<string>();
@@ -212,7 +217,7 @@ export async function webSearch(query: string, limit: number): Promise<Connector
       fields: { title: h.title, url: h.url, snippet: h.snippet, page_fetched: !!page },
     };
   });
-  return { items, url: usedUrl };
+  return { items, url: usedUrl, warnings };
 }
 
 export async function urlFetch(query: string, limit: number): Promise<ConnectorResult> {
@@ -230,6 +235,7 @@ export async function urlFetch(query: string, limit: number): Promise<ConnectorR
 
   const errors: string[] = [];
   const items: RawItem[] = [];
+  const firecrawlFailed: unknown[] = [];
   await Promise.all(
     urls.map(async (url) => {
       try {
@@ -252,6 +258,7 @@ export async function urlFetch(query: string, limit: number): Promise<ConnectorR
             return;
           } catch (e) {
             console.warn(`Firecrawl scrape failed for ${url}, using built-in fetch`, e);
+            firecrawlFailed.push(e);
           }
         }
         const { html, finalUrl } = await fetchPage(url, { userAgent: BROWSER_UA, publicOnly: true });
@@ -270,6 +277,10 @@ export async function urlFetch(query: string, limit: number): Promise<ConnectorR
       }
     }),
   );
-  if (!items.length && errors.length) throw new Error(`url_fetch failed: ${errors.join("; ")}`);
-  return { items, url: urls[0] };
+  const n = firecrawlFailed.length;
+  const warnings = n
+    ? [`Firecrawl couldn't read ${n} page${n === 1 ? "" : "s"} (${friendlyReason(firecrawlFailed[0])}), so the built-in fetcher was used`]
+    : [];
+  if (!items.length && errors.length) throw Object.assign(new Error(`url_fetch failed: ${errors.join("; ")}`), { warnings });
+  return { items, url: urls[0], warnings };
 }

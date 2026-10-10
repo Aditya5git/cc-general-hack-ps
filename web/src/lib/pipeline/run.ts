@@ -47,6 +47,7 @@ async function collectStep(id: string, step: SourceStep): Promise<RawItem[]> {
   try {
     const r = await c.run(step.query, step.limit ?? 20);
     const ms = Date.now() - t0;
+    for (const w of r.warnings ?? []) await logEvent(id, "collect", w, "warn");
     // "empty" rather than "ok" so a search that silently found nothing stands out in the Sources tab
     const pages = [...new Set(r.items.map((it) => it.url).filter((u) => /^https?:\/\//.test(u)))].slice(0, 40);
     await sql`INSERT INTO sources (workflow_id, connector, query, url, status, items, duration_ms, pages)
@@ -57,6 +58,7 @@ async function collectStep(id: string, step: SourceStep): Promise<RawItem[]> {
     return r.items;
   } catch (e) {
     console.error(`${step.connector} failed for "${step.query}"`, e);
+    for (const w of (e as { warnings?: string[] }).warnings ?? []) await logEvent(id, "collect", w, "warn");
     const msg = friendlyReason(e);
     await sql`INSERT INTO sources (workflow_id, connector, query, status, duration_ms, error)
               VALUES (${id}, ${step.connector}, ${step.query}, 'failed', ${Date.now() - t0}, ${msg})`;
@@ -223,6 +225,9 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
       await logEvent(id, "collect", `Only ${clean.length} row${clean.length === 1 ? "" : "s"} so far, so running one extra web search`);
       const topUp = await collectStep(id, { connector: "web_search", query: topUpQuery, limit: 10 });
       collected.push({ connector: "web_search", items: topUp });
+      // the extra search is a source step too, so it belongs in the sources ok / failed counts
+      if (topUp.length) stats.sources_ok = (stats.sources_ok ?? 0) + 1;
+      else stats.sources_failed = (stats.sources_failed ?? 0) + 1;
       const fresh = topUp.filter((it) => !seen.has(it.url));
       if (fresh.length) {
         fresh.forEach((it) => seen.add(it.url));
