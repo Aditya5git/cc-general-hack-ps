@@ -1,7 +1,7 @@
 import { CONNECTORS } from "../connectors";
 import { assertNotCancelled, CancelledError, logEvent, setStatus, sql } from "../db";
 import { llmProvider } from "../llm";
-import type { DropReasons, RawItem, SourceStep, Workflow, WorkflowPlan } from "../types";
+import type { ConnectorId, DropReasons, RawItem, SourceStep, Workflow, WorkflowPlan } from "../types";
 import { extractAll } from "./extract";
 import { planWorkflow } from "./planner";
 import { RejectedRequestError } from "./safety";
@@ -12,10 +12,10 @@ const maxRaw = () => Math.min(Math.max(Number(process.env.MAX_RAW_ITEMS) || 120,
 
 /**
  * Upsert rows by dedupe key so ids (and fetched_at = first seen) stay stable across live batches and refreshes.
- * Existing keys are merged (`old || new`) so AI-column values added later survive. With `prune`, rows no longer
- * in `clean` are removed; returns how many were.
+ * Existing keys are merged (`old || new`) so AI-column values added later survive. With `prune`, rows no longer in
+ * `clean` are removed if this run added them (live batches) or their source is in `prune.sources`; returns how many were.
  */
-async function syncRecords(id: string, clean: CleanRow[], prune: boolean): Promise<number> {
+async function syncRecords(id: string, clean: CleanRow[], prune?: { since: string; sources: string[] }): Promise<number> {
   if (clean.length) {
     await sql`INSERT INTO records (workflow_id, data, source_name, source_url, confidence, dedupe_key)
       SELECT ${id}, x.data, x.source_name, x.source_url, x.confidence, x.dedupe_key
@@ -27,6 +27,8 @@ async function syncRecords(id: string, clean: CleanRow[], prune: boolean): Promi
   }
   if (!prune) return 0;
   const gone = await sql`DELETE FROM records WHERE workflow_id = ${id}
+    AND (fetched_at >= ${prune.since}
+      OR source_name IN (SELECT jsonb_array_elements_text(${JSON.stringify(prune.sources)}::jsonb)))
     AND dedupe_key NOT IN (SELECT jsonb_array_elements_text(${JSON.stringify(clean.map((c) => c.dedupe_key))}::jsonb))
     RETURNING id`;
   return gone.length;
@@ -55,6 +57,26 @@ async function collectStep(id: string, step: SourceStep): Promise<RawItem[]> {
     await logEvent(id, "collect", `✗ ${c.label} failed: ${msg}`, "error");
     return [];
   }
+}
+
+/**
+ * Source names a refresh may prune: those from connectors whose every step returned items this run. A step that
+ * failed or found nothing says nothing about whether its old rows are gone.
+ */
+function prunableSources(collected: { connector: ConnectorId; items: RawItem[] }[]) {
+  const down = new Set<string>(collected.filter((c) => !c.items.length).map((c) => c.connector));
+  // fallbacks store rows under another name, so a down connector may own those rows too
+  if (down.has("web_search")) down.add("wikipedia");
+  if (down.has("coingecko")) down.add("coinpaprika");
+  const ok = new Set<string>();
+  for (const c of collected)
+    if (!down.has(c.connector))
+      for (const it of c.items) {
+        // same naming as validate.ts source_name
+        const name = it.fields?.data_provider === "coinpaprika" ? "coinpaprika" : it.source;
+        if (!down.has(name)) ok.add(name);
+      }
+  return { ok: [...ok], down: [...down] };
 }
 
 /** One line per drop reason, e.g. `3 had no title · 5 failed "located in Uttar Pradesh"`. */
@@ -104,7 +126,8 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
   const prevRuns = (prev?.stats as Workflow["stats"])?.runs ?? 0;
   const runs = (opts.refresh ? Math.max(prevRuns, 1) : prevRuns) + 1; // datasets from before run counting still refresh as #2
   // DB clock, so it compares cleanly with records.fetched_at (default now()) for NEW badges
-  const stats: Workflow["stats"] = { runs, run_started_at: new Date(prev.started).toISOString() };
+  const startedAt = new Date(prev.started).toISOString();
+  const stats: Workflow["stats"] = { runs, run_started_at: startedAt };
   // AI columns are filled on demand, not extracted from sources; keep their stored values untouched.
   const work: WorkflowPlan = { ...plan, fields: plan.fields.filter((f) => !f.ai) };
   try {
@@ -116,6 +139,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
 
     // Collect (all sources in parallel)
     const results = await Promise.all(work.sources.map((step) => collectStep(id, step)));
+    const collected = work.sources.map((s, i) => ({ connector: s.connector, items: results[i] }));
     stats.sources_ok = results.filter((r) => r.length).length;
     stats.sources_failed = work.sources.length - stats.sources_ok;
 
@@ -147,7 +171,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
       const snapshot = validateAndDedupe(work, [...rowsSoFar]).clean;
       sync = sync
         .then(async () => {
-          await syncRecords(id, snapshot, false);
+          await syncRecords(id, snapshot);
           if (snapshot.length > lastLive) {
             await logEvent(id, "stream", `${snapshot.length} validated rows live (batch ${done}/${total})`);
             lastLive = snapshot.length;
@@ -156,6 +180,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
         .catch((e) => console.error("live sync failed", e));
       await sync;
     });
+    let llmOnly = mode === "llm";
     stats.extracted = rows.length;
     await logEvent(id, "extract", `Extracted ${rows.length} candidate rows (${mode} extraction)`, "success");
 
@@ -168,7 +193,9 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
     if (clean.length < want && !work.sources.some((s) => s.connector === "web_search" && s.query.toLowerCase() === topUpQuery.toLowerCase())) {
       await assertNotCancelled(id, stats.run_started_at);
       await logEvent(id, "collect", `Only ${clean.length} row${clean.length === 1 ? "" : "s"} so far, so running one extra web search`);
-      const fresh = (await collectStep(id, { connector: "web_search", query: topUpQuery, limit: 10 })).filter((it) => !seen.has(it.url));
+      const topUp = await collectStep(id, { connector: "web_search", query: topUpQuery, limit: 10 });
+      collected.push({ connector: "web_search", items: topUp });
+      const fresh = topUp.filter((it) => !seen.has(it.url));
       if (fresh.length) {
         fresh.forEach((it) => seen.add(it.url));
         stats.raw = (stats.raw ?? 0) + fresh.length;
@@ -176,6 +203,7 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
           await assertNotCancelled(id, stats.run_started_at);
           if (note) await logEvent(id, "extract", note, "warn");
         });
+        llmOnly &&= more.mode === "llm";
         rows.push(...more.rows);
         ({ clean, invalid, duplicates, reasons, relaxed } = validateAndDedupe(work, rows));
         await logEvent(id, "extract", `Extra search added ${more.rows.length} candidate rows`, "success");
@@ -191,7 +219,12 @@ export async function executePlan(id: string, plan: WorkflowPlan, opts: { refres
     // Store the final snapshot; live batches already inserted most rows
     await sync;
     await assertNotCancelled(id, stats.run_started_at);
-    const removed = await syncRecords(id, clean, true);
+    // A bad run (nothing kept, AI fell back to keywords, a source down) must not delete rows it couldn't re-check
+    const { ok, down } = prunableSources(collected);
+    const skipPrune = !clean.length ? "no rows passed validation" : !llmOnly ? "AI extraction was unavailable for some pages" : null;
+    const removed = await syncRecords(id, clean, { since: startedAt, sources: skipPrune ? [] : ok });
+    if (runs > 1 && skipPrune) await logEvent(id, "refresh", `Kept previous data: ${skipPrune}, so older rows were not removed`, "warn");
+    else if (runs > 1 && down.length) await logEvent(id, "refresh", `Kept previous data from ${down.join(", ")} (failed or found nothing this time)`, "warn");
     stats.stored = clean.length;
     if (runs > 1) {
       const [{ added }] = await sql`SELECT count(*)::int AS added FROM records WHERE workflow_id = ${id} AND fetched_at >= ${stats.run_started_at}`;
