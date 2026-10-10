@@ -67,8 +67,13 @@ const busy = (status: number) => [401, 402, 403, 408, 429].includes(status) || s
 const coolingUntil = new Map<Provider, number>();
 const cooldownMs = (e: LLMError) => (e.status === 429 || e.status === 402 ? 60_000 : 15_000);
 
+/** Time for one attempt: its own limit, cut short by what's left of the whole call's deadline. */
+type Budget = { attemptMs: number; deadline: number };
+const attemptTime = (b: Budget) => Math.max(1000, Math.min(b.attemptMs, b.deadline - Date.now()));
+
 /** POST JSON with its own timeout. Network errors and timeouts become retryable LLMErrors. */
-async function post(label: string, url: string, headers: Record<string, string>, body: unknown, timeoutMs: number) {
+async function post(label: string, url: string, headers: Record<string, string>, body: unknown, budget: Budget) {
+  const timeoutMs = attemptTime(budget);
   try {
     return await fetch(url, {
       method: "POST",
@@ -83,31 +88,41 @@ async function post(label: string, url: string, headers: Record<string, string>,
   }
 }
 
+/** A 200 whose body isn't JSON (an HTML error page from a proxy) is a broken provider, not our request: fail over. */
+async function readJSON(label: string, res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    count(false);
+    throw new LLMError(`${label} returned an unreadable response`, res.status, true);
+  }
+}
+
 async function fail(label: string, res: Response): Promise<never> {
   count(false);
   throw new LLMError(`${label} ${res.status}: ${(await res.text()).slice(0, 200)}`, res.status, busy(res.status));
 }
 
 /** `truncated`: the provider stopped because it hit maxTokens, so the JSON is probably incomplete. */
-type Call = (sys: string, user: string, maxTokens: number, timeoutMs: number) => Promise<{ text: string; truncated: boolean }>;
+type Call = (sys: string, user: string, maxTokens: number, budget: Budget) => Promise<{ text: string; truncated: boolean }>;
 
-const anthropic: Call = async (sys, user, maxTokens, timeoutMs) => {
+const anthropic: Call = async (sys, user, maxTokens, budget) => {
   const res = await post(
     "Anthropic",
     "https://api.anthropic.com/v1/messages",
     { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
     { model: modelFor("anthropic", "claude-haiku-4-5-20251001"), max_tokens: maxTokens, system: sys, messages: [{ role: "user", content: user }] },
-    timeoutMs,
+    budget,
   );
   if (!res.ok) await fail("Anthropic", res);
-  const body = await res.json();
+  const body = await readJSON("Anthropic", res);
   count(true, body.usage?.input_tokens, body.usage?.output_tokens);
   return { text: body.content?.find((b: { type: string }) => b.type === "text")?.text ?? "", truncated: body.stop_reason === "max_tokens" };
 };
 
 const openaiCompatible =
   (p: "openai" | "openrouter"): Call =>
-  async (sys, user, maxTokens, timeoutMs) => {
+  async (sys, user, maxTokens, budget) => {
     const or = p === "openrouter";
     const call = (tokens: number) =>
       post(
@@ -123,7 +138,7 @@ const openaiCompatible =
             { role: "user", content: user },
           ],
         },
-        timeoutMs,
+        budget,
       );
     let res = await call(maxTokens);
     // OpenRouter answers 402 when the credit balance can't cover max_tokens; retry with what it can afford.
@@ -134,16 +149,17 @@ const openaiCompatible =
       res = await call(Math.min(maxTokens, affordable - 50));
     }
     if (!res.ok) await fail(LABEL[p], res);
-    const body = await res.json();
+    const body = await readJSON(LABEL[p], res);
     count(true, body.usage?.prompt_tokens, body.usage?.completion_tokens);
     return { text: body.choices?.[0]?.message?.content ?? "", truncated: body.choices?.[0]?.finish_reason === "length" };
   };
 
 /** Gemini tries the preferred model, then lighter ones (separate quotas) when Google reports overload or limits. */
-const gemini: Call = async (sys, user, maxTokens, timeoutMs) => {
+const gemini: Call = async (sys, user, maxTokens, budget) => {
   const models = [modelFor("gemini", "gemini-3.6-flash"), "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-latest"];
-  let last: LLMError | null = null;
+  const errors: LLMError[] = [];
   for (const model of [...new Set(models)]) {
+    if (budget.deadline - Date.now() < 1000) break;
     const res = await post(
       `Gemini ${model}`,
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -159,24 +175,32 @@ const gemini: Call = async (sys, user, maxTokens, timeoutMs) => {
           ...(model.startsWith("gemini-3") ? { thinkingConfig: { thinkingLevel: "minimal" } } : {}),
         },
       },
-      timeoutMs,
-    );
-    // a timeout or network error throws from post(): go to the next provider rather than wait on 3 more models
+      budget,
+    ).catch((e: LLMError) => e);
+    // a timeout or network error: go to the next provider rather than wait on 3 more models
+    if (res instanceof LLMError) {
+      errors.push(res);
+      break;
+    }
     if (res.ok) {
-      const body = await res.json();
+      const body = await readJSON(`Gemini ${model}`, res);
       const u = body.usageMetadata ?? {};
       count(true, u.promptTokenCount, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0));
       const c = body.candidates?.[0];
       return { text: c?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "", truncated: c?.finishReason === "MAX_TOKENS" };
     }
-    last = await fail(`Gemini ${model}`, res).catch((e: LLMError) => e);
+    errors.push(await fail(`Gemini ${model}`, res).catch((e: LLMError) => e));
     if (![404, 429, 500, 503].includes(res.status)) break;
     // LLM_NO_FALLBACK=1 (eval harness): a rate limit stops here instead of fanning out into 4 requests;
     // overload (503) still moves on to a lighter model.
     if (res.status === 429 && process.env.LLM_NO_FALLBACK) break;
   }
-  // a retired model (404) on every try is still worth handing to the next provider
-  throw last && last.status === 404 ? new LLMError(last.message, 404, true) : last!;
+  // Report the error that says most about Gemini as a whole: a rate limit on any model (so the cooldown is the
+  // long one), else any busy error (so a lighter model's 400 can't block failover), else the last one. A retired
+  // model (404) on every try is still worth handing to the next provider.
+  const pick = errors.find((e) => e.status === 429 || e.status === 402) ?? errors.find((e) => e.retryable) ?? errors[errors.length - 1];
+  if (!pick) throw new LLMError("Gemini out of time", null, true);
+  throw pick.status === 404 ? new LLMError(pick.message, 404, true) : pick;
 };
 
 const CALLS: Record<Provider, Call> = { gemini, openrouter: openaiCompatible("openrouter"), anthropic, openai: openaiCompatible("openai") };
@@ -195,21 +219,28 @@ function parseJSON<T>(text: string): T {
 /**
  * One JSON completion. Tries each configured provider in order, moving on only when one is busy (rate limit,
  * overload, out of credits, timeout); a bad request throws straight away, and an answer that was cut off or
- * isn't valid JSON throws an LLMOutputError carrying the raw text. `timeoutMs` applies to each attempt.
+ * isn't valid JSON throws an LLMOutputError carrying the raw text. `timeoutMs` applies to each attempt and
+ * `totalMs` to the whole call, so every provider being down costs minutes at most, not one timeout per provider.
  */
-export async function llmJSON<T>(system: string, user: string, maxTokens = 4096, opts: { timeoutMs?: number } = {}): Promise<T | null> {
+export async function llmJSON<T>(
+  system: string,
+  user: string,
+  maxTokens = 4096,
+  opts: { timeoutMs?: number; totalMs?: number } = {},
+): Promise<T | null> {
   const providers = llmProviders();
   if (!providers.length) return null;
-  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const budget: Budget = { attemptMs: opts.timeoutMs ?? 60_000, deadline: Date.now() + (opts.totalMs ?? 120_000) };
   const sys = `${system}\n\nRespond with a single valid JSON value only. No prose, no markdown fences.`;
 
   const ready = providers.filter((p) => (coolingUntil.get(p) ?? 0) <= Date.now());
   const errors: LLMError[] = [];
   // all cooling down: try them anyway rather than fail without asking
   for (const p of ready.length ? ready : providers) {
+    if (budget.deadline - Date.now() < 1000) break;
     let answer: { text: string; truncated: boolean };
     try {
-      answer = await CALLS[p](sys, user, maxTokens, timeoutMs);
+      answer = await CALLS[p](sys, user, maxTokens, budget);
     } catch (e) {
       if (!(e instanceof LLMError) || !e.retryable) throw e;
       coolingUntil.set(p, Date.now() + cooldownMs(e));
@@ -224,6 +255,9 @@ export async function llmJSON<T>(system: string, user: string, maxTokens = 4096,
       throw new LLMOutputError(`${LABEL[p]} returned invalid JSON`, answer.text, false);
     }
   }
-  const last = errors[errors.length - 1];
-  throw new LLMError(errors.map((e) => e.message).join(" · then "), last.status, true);
+  if (!errors.length) throw new LLMError("No AI provider answered in time", null, true);
+  // "out of quota" (which makes extraction stop asking for the rest of a run) only when EVERY provider said so;
+  // one provider timing out while another is rate-limited may well work on the next batch
+  const quota = errors.every((e) => e.status != null && [401, 402, 403, 429].includes(e.status));
+  throw new LLMError(errors.map((e) => e.message).join(" · then "), quota ? errors[errors.length - 1].status : null, true);
 }
