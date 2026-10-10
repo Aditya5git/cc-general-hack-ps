@@ -18,6 +18,7 @@ Return JSON:
   "fields": [{"name": snake_case, "type": "string"|"number"|"url"|"date"|"email"|"list", "description": str, "required": bool}]  (4-9 fields; always include a name/title field and one url field; mark 1-2 as required),
   "sources": [{"connector": id, "query": str, "limit": int (20-40), "reason": short why}] (3-5 steps, so the dataset has enough rows: combine every connector that fits and add web_search steps with different phrasings; prefer structured API connectors when they fit; use web_search for open-ended business lists like sponsors, leads, events; use url_fetch only if the user gave URLs; queries must be short keyword queries tailored to each connector),
   "filters": [plain-English constraints from the request, e.g. "must mention salary", "posted in last 7 days", "based in India"],
+  "subject_filters": [the filters (copied exactly) that define WHAT a row is: its topic, skill, technology or kind of thing, e.g. "must be a React or React Native role", "must be a vector database". A row failing one of these is not what the user asked for at all. Never list details like salary, location, dates or size here],
   "dedupe_on": [field names that identify a unique row],
   "max_results": int (default 50, max 150)
 }
@@ -60,10 +61,18 @@ function sanitize(plan: WorkflowPlan, prompt: string): WorkflowPlan {
     fields,
     sources,
     filters: plan.filters ?? [],
+    subject_filters: subjectFilters(plan.filters ?? [], plan.subject_filters),
     dedupe_on: (plan.dedupe_on ?? []).filter((d) => fields.some((f) => f.name === d)),
     max_results: Math.min(plan.max_results || 50, 150),
     planner: "llm",
   };
+}
+
+/** Keep only subject filters that are real filters of the plan (the model must not invent new ones). */
+function subjectFilters(filters: string[], subject: unknown): string[] {
+  if (!Array.isArray(subject)) return [];
+  const known = new Map(filters.map((f) => [f.trim().toLowerCase(), f]));
+  return [...new Set(subject.map((s) => known.get(String(s).trim().toLowerCase())).filter((f): f is string => !!f))];
 }
 
 // ---------- Heuristic fallback (no LLM key configured) ----------
@@ -201,5 +210,7 @@ export function applyPlanEdits(original: WorkflowPlan, edited: Partial<WorkflowP
   if (!sources.length) throw new Error("Keep at least one source.");
   const filters = (edited.filters ?? original.filters).map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 8);
   const dedupe = original.dedupe_on.filter((d) => fields.some((f) => f.name === d));
-  return { ...original, fields, sources, filters, dedupe_on: dedupe.length ? dedupe : [fields[0].name] };
+  // a filter whose text the user changed is no longer known to define the subject, so it becomes a detail filter
+  const subject_filters = (original.subject_filters ?? []).filter((s) => filters.includes(s));
+  return { ...original, fields, sources, filters, subject_filters, dedupe_on: dedupe.length ? dedupe : [fields[0].name] };
 }

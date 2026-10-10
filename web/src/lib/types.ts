@@ -45,6 +45,9 @@ export interface WorkflowPlan {
   fields: FieldSpec[];
   sources: SourceStep[];
   filters: string[]; // plain-English constraints applied during validation
+  /** The filters that define what a row IS (topic, skill, kind of thing). A row that fails one is dropped;
+   *  every other filter only marks the row ✗ and ranks it lower. Always a subset of `filters`. */
+  subject_filters?: string[];
   dedupe_on: string[]; // field names forming the dedupe key
   max_results: number;
   planner: "llm" | "heuristic";

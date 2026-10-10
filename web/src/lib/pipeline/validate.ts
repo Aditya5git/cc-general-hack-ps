@@ -60,9 +60,13 @@ const norm = (v: unknown) =>
 export const identityField = (plan: WorkflowPlan) =>
   (plan.fields.find((f) => f.required && f.type === "string") ?? plan.fields.find((f) => f.type === "string") ?? plan.fields[0]).name;
 
+// Rows the extractor (or keyword fallback) scores below this are not the requested thing.
+const MIN_RELEVANCE = 0.4;
+
 /**
- * Rows that fail a filter are kept, marked ✗ in their checks, at half confidence so they sort below rows that
- * pass. `reasons.failed_filters` counts them (as flagged, not dropped). Only unnamed or off-topic rows are dropped.
+ * Rows that fail a detail filter are kept, marked ✗ in their checks, at half confidence so they sort below rows
+ * that pass; `reasons.failed_filters` counts them (as flagged, not dropped). Unnamed rows, low-relevance rows and
+ * rows failing a subject filter are dropped.
  */
 export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
   clean: CleanRow[];
@@ -76,15 +80,18 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
   let duplicates = 0;
   const reasons: DropReasons = { no_name: 0, irrelevant: 0, failed_filters: {} };
   const idField = identityField(plan);
+  const subject = new Set(plan.subject_filters ?? []);
 
   for (const r of rows) {
     const data: Record<string, unknown> = {};
     for (const f of plan.fields) data[f.name] = cleanValue(f, r.data[f.name]);
 
-    // Keep partial rows (empty columns show as "—") and rows that fail a filter (shown ✗). Drop only rows with
-    // no name and rows the extractor rated as not being the requested thing at all.
+    // Keep partial rows (empty columns show as "—") and rows that fail a detail filter (shown ✗). Drop rows with
+    // no name, rows the extractor rated as not being the requested thing, and rows that fail a subject filter
+    // ("must be a React role"): a sales job is not a weaker match for "React jobs", it is no match.
     const failed = plan.filters.filter((_, i) => r.checks?.[i] === false);
-    if (data[idField] == null || r.relevance < 0.2) {
+    const offSubject = failed.some((f) => subject.has(f));
+    if (data[idField] == null || r.relevance < MIN_RELEVANCE || offSubject) {
       if (data[idField] == null) reasons.no_name++;
       else reasons.irrelevant++;
       invalid++;
