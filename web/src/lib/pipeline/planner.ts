@@ -15,7 +15,7 @@ Return JSON:
   "title": short dataset title (max 60 chars),
   "intent": one sentence restating exactly what data is wanted,
   "entity": what one row represents (e.g. "job posting", "company", "sponsor"),
-  "fields": [{"name": snake_case, "type": "string"|"number"|"url"|"date"|"email"|"list", "description": str, "required": bool}]  (4-9 fields; always include a name/title field and one url field; mark 1-2 as required),
+  "fields": [{"name": snake_case, "type": "string"|"number"|"url"|"date"|"email"|"list", "description": str, "required": bool}]  (4-9 fields; always include a name/title field and one url field; mark as required the name/title field and every field the user explicitly asked for, e.g. salary in "jobs with salary info", stars in "repos with star counts"; rows missing a required field rank lower),
   "sources": [{"connector": id, "query": str, "limit": int (20-40), "reason": short why}] (3-5 steps, so the dataset has enough rows: combine every connector that fits and add web_search steps with different phrasings; prefer structured API connectors when they fit; use web_search for open-ended business lists like sponsors, leads, events; use url_fetch only if the user gave URLs; queries must be short keyword queries tailored to each connector),
   "filters": [plain-English constraints from the request, e.g. "must mention salary", "posted in last 7 days", "based in India"],
   "subject_filters": [the filters (copied exactly) that define WHAT a row is: its topic, skill, technology or kind of thing, e.g. "must be a React or React Native role", "must be a vector database". A row failing one of these is not what the user asked for at all. Never list details like salary, location, dates or size here],

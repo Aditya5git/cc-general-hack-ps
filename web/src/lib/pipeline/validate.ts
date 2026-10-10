@@ -56,9 +56,30 @@ const norm = (v: unknown) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
-/** The column that names a row (job title, company name…). The only field a row must have. */
+const NAMING = /(^|_)(name|title)$/;
+
+/** The column that names a row (job title, company name…). The only field a row must have. A column called
+ *  *name / *title wins, so a required "salary" listed first never becomes the name. */
 export const identityField = (plan: WorkflowPlan) =>
-  (plan.fields.find((f) => f.required && f.type === "string") ?? plan.fields.find((f) => f.type === "string") ?? plan.fields[0]).name;
+  (plan.fields.find((f) => f.type === "string" && NAMING.test(f.name)) ??
+    plan.fields.find((f) => f.required && f.type === "string") ??
+    plan.fields.find((f) => f.type === "string") ??
+    plan.fields[0]).name;
+
+// Ranking. Columns the user asked for (required) count REQUIRED_WEIGHT times in the fill share, and each one
+// left empty (other than the name) costs MISSING_REQUIRED: a job without the salary you asked for ranks below
+// jobs that have it, but stays in the table. Failing a detail filter halves the score.
+const REQUIRED_WEIGHT = 3;
+const MISSING_REQUIRED = 0.75;
+
+function score(plan: WorkflowPlan, idField: string, data: Record<string, unknown>, relevance: number, failedFilters: number) {
+  const weight = (f: FieldSpec) => (f.required ? REQUIRED_WEIGHT : 1);
+  const total = plan.fields.reduce((n, f) => n + weight(f), 0);
+  const fill = plan.fields.reduce((n, f) => n + (data[f.name] != null ? weight(f) : 0), 0) / total;
+  const missing = plan.fields.filter((f) => f.required && f.name !== idField && data[f.name] == null).length;
+  const s = (0.6 * relevance + 0.4 * fill) * MISSING_REQUIRED ** missing * (failedFilters ? 0.5 : 1);
+  return Math.round(s * 100) / 100;
+}
 
 // Rows the extractor (or keyword fallback) scores below this are not the requested thing.
 const MIN_RELEVANCE = 0.4;
@@ -76,6 +97,7 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
   relaxed: boolean;
 } {
   const out = new Map<string, CleanRow>();
+  const basis = new Map<string, { relevance: number; failed: number }>(); // per dedupe key, to rescore after a merge
   let invalid = 0;
   let duplicates = 0;
   const reasons: DropReasons = { no_name: 0, irrelevant: 0, failed_filters: {} };
@@ -98,7 +120,6 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
       continue;
     }
     for (const f of failed) reasons.failed_filters[f] = (reasons.failed_filters[f] ?? 0) + 1;
-    const filled = plan.fields.filter((f) => data[f.name] != null).length / plan.fields.length;
 
     const why = typeof r.why === "string" ? r.why.replace(/\s+/g, " ").trim().slice(0, 240) : "";
     if (why) data[WHY_KEY] = why;
@@ -118,17 +139,23 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
       data,
       source_name: r.item.source,
       source_url: r.item.url,
-      confidence: Math.round((0.6 * r.relevance + 0.4 * filled) * (failed.length ? 0.5 : 1) * 100) / 100,
+      confidence: score(plan, idField, data, r.relevance, failed.length),
       dedupe_key: key.slice(0, 300),
     };
     const prev = out.get(row.dedupe_key);
     if (prev) {
       duplicates++;
-      // keep the more complete/confident row, but merge in any missing fields
-      const [keep, other] = row.confidence > prev.confidence ? [row, prev] : [prev, row];
+      // keep the more complete/confident row, merge in any missing fields, then score the merged row
+      const mine = { relevance: r.relevance, failed: failed.length };
+      const [keep, other, b] = row.confidence > prev.confidence ? [row, prev, mine] : [prev, row, basis.get(row.dedupe_key)!];
       for (const k of Object.keys(keep.data)) if (keep.data[k] == null) keep.data[k] = other.data[k];
+      keep.confidence = score(plan, idField, keep.data, b.relevance, b.failed);
       out.set(row.dedupe_key, keep);
-    } else out.set(row.dedupe_key, row);
+      basis.set(row.dedupe_key, b);
+    } else {
+      out.set(row.dedupe_key, row);
+      basis.set(row.dedupe_key, { relevance: r.relevance, failed: failed.length });
+    }
   }
 
   const clean = [...out.values()].sort((a, b) => b.confidence - a.confidence).slice(0, plan.max_results);
