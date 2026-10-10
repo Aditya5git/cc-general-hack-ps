@@ -245,7 +245,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
           <Btn label="Refresh" onClick={refresh} disabled={!canEdit || busy !== null || running || !w.plan || w.status === "review"}>
             {busy === "refresh" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
           </Btn>
-          <Btn label="Rerun" onClick={rerun} disabled={busy !== null}>
+          <Btn label="Rerun" onClick={rerun} disabled={busy !== null || running}>
             {busy === "rerun" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RotateCw className="h-3.5 w-3.5" aria-hidden />}
           </Btn>
           <ExportLink label="CSV" title="Export as CSV" href={`/api/workflows/${id}/export?format=csv`} disabled={!recordCount}>
@@ -330,10 +330,10 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
           <button
             type="button"
             onClick={w.plan && canEdit ? refresh : rerun}
-            disabled={busy !== null}
+            disabled={busy !== null || running}
             className="h-7 shrink-0 rounded-md bg-zinc-50 px-2.5 text-[12.5px] font-medium text-zinc-950 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {w.status === "cancelled" ? "Resume" : "Try again"}
+            {w.status === "cancelled" ? "Run again" : "Try again"}
           </button>
         </div>
       )}
