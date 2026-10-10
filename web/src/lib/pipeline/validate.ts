@@ -16,28 +16,61 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EMPTY =
   /^(n\/?a|null|none|nil|unknown|-+|—|–|tbd|tba|undisclosed|confidential|competitive|negotiable|varies|not (specified|disclosed|available|listed|provided|mentioned|stated|applicable)|see (description|website|listing))$/i;
 
-// Number words and suffixes: 120k, 1.5M, 2bn, 12 LPA (lakh per annum), 3 crore.
-const SCALE: [RegExp, number][] = [
-  [/^(k|thousand)$/, 1e3],
-  [/^(l|lac|lacs|lakh|lakhs|lpa)$/, 1e5],
-  [/^(m|mn|mm|million|millions)$/, 1e6],
-  [/^(cr|crore|crores)$/, 1e7],
-  [/^(b|bn|billion|billions)$/, 1e9],
-  [/^(t|tn|trillion|trillions)$/, 1e12],
-];
+// Scale written right after the number (120k, 1.5M, 2bn) or as its own word (12 lakh, 3 crore, 1,5 Mio). Letters that
+// aren't a scale are a unit ("100 mm", "5 L") and leave the number alone.
+const SCALE_ATTACHED: Record<string, number> = { k: 1e3, m: 1e6, mn: 1e6, b: 1e9, bn: 1e9 };
+const SCALE_WORD: Record<string, number> = {
+  thousand: 1e3, lakh: 1e5, lakhs: 1e5, lac: 1e5, lacs: 1e5, lpa: 1e5, million: 1e6, millions: 1e6, mio: 1e6, mn: 1e6,
+  crore: 1e7, crores: 1e7, cr: 1e7, billion: 1e9, billions: 1e9, bn: 1e9, trillion: 1e12,
+};
+const CURRENCY = /[$€£₹]|\b(usd|inr|eur|gbp|rs\.?|us)\b/g;
+const QUALIFIER = /^(about|approx\.?|approximately|around|~|over|under|up to|upto|nearly|almost|more than|less than|at least|[<>]=?)\s*/;
 
-/** "$120k" → 120000, "₹12 LPA" → 1200000, "120k-150k" → 120000 (lower bound), "1.234,56" → 1234.56; null if none. */
+/** "12.345" style digits as a number: "1.234,56" / "€50.000" / "1.000.000" (dot thousands), "12,5" (decimal comma). */
+function digits(tok: string, euro: boolean): number {
+  if (/^\d{1,3}(\.\d{3})+,\d+$/.test(tok)) return Number(tok.replace(/\./g, "").replace(",", "."));
+  if (/^\d{1,3}(\.\d{3}){2,}$/.test(tok) || (euro && /^\d{1,3}\.\d{3}$/.test(tok))) return Number(tok.replace(/\./g, ""));
+  if (/^\d+,\d{1,2}$/.test(tok)) return Number(tok.replace(",", "."));
+  return Number(tok.replace(/,/g, ""));
+}
+
+/**
+ * A number only when the value IS a number: "$120k" → 120000, "₹12 LPA" → 1200000, "120k–150k" → 120000 (lower
+ * bound), "31,956 stars" → 31956, "(5)" → -5, "Free" → 0. Text with other numbers in it ("Top 10: 2,500", "Series 2
+ * $30M", a phone number, "v2.3.1") is null: a wrong number sorts and charts as if it were right.
+ */
 export function parseNumber(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v !== "string") return null;
-  let s = v.toLowerCase().replace(/\b(usd|inr|eur|gbp|rs\.?|us)\b|[$€£₹]/g, " ");
-  s = s.replace(/\b(\d{1,3}(?:\.\d{3})+),(\d{1,2})\b/g, (_, a: string, b: string) => `${a.replace(/\./g, "")}.${b}`); // 1.234,56
-  const m = s.match(/(-?\d[\d,]*(?:\.\d+)?)\s*([a-z]+)?/);
+  let s = v.trim().toLowerCase().replace(/−/g, "-");
+  if (s === "free") return 0;
+  const money = /[$€£₹]|\b(usd|inr|eur|gbp|rs\.?)\b/.test(s);
+  const euro = /€|\beur\b/.test(s);
+  s = s.replace(CURRENCY, " ").trim().replace(QUALIFIER, "").trim();
+  const paren = /^\(.*\)$/.test(s);
+  if (paren) s = s.slice(1, -1).trim();
+  const sci = s.match(/^([-+]?\d+(?:\.\d+)?)e([-+]?\d+)$/);
+  if (sci) return Number(`${sci[1]}e${sci[2]}`);
+  const m = s.match(/^([-+]?)(\.\d+|\d[\d.,]*)([a-z]*)\s*([a-z]+)?\b(.*)$/);
   if (!m) return null;
-  const n = Number(m[1].replace(/,/g, ""));
+  const [, sign, tok, attached, word] = m;
+  let rest = m[5];
+  let n = digits(tok.startsWith(".") ? `0${tok}` : tok.replace(/[.,]$/, ""), euro);
   if (!Number.isFinite(n)) return null;
-  const scale = m[2] ? SCALE.find(([re]) => re.test(m[2]))?.[1] ?? 1 : 1;
-  return Math.round(n * scale * 1e6) / 1e6;
+  let scale = 1;
+  if (attached) {
+    if (SCALE_ATTACHED[attached]) scale = SCALE_ATTACHED[attached];
+    else if (SCALE_WORD[attached]) scale = SCALE_WORD[attached];
+  }
+  if (word) {
+    if (scale === 1 && (SCALE_WORD[word] || (money && SCALE_ATTACHED[word]))) scale = SCALE_WORD[word] ?? SCALE_ATTACHED[word];
+    else rest = `${word}${rest}`;
+  }
+  // a range's upper bound ("- 150k", "to $200,000") may hold digits; anything else after the number may not
+  rest = rest.replace(/^\s*(-|–|to)\s*[\d.,]+\s*[a-z]*/, "");
+  if (/\d/.test(rest)) return null;
+  n *= scale * (sign === "-" || paren ? -1 : 1);
+  return Math.round(n * 1e6) / 1e6;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -65,19 +98,29 @@ export function cleanDate(v: unknown, now = new Date()): string | null {
   if (ago || /^(today|yesterday|just now)$/i.test(s)) {
     const n = ago ? (/^\d/.test(ago[1]) ? Number(ago[1]) : 1) : /yesterday/i.test(s) ? 1 : 0;
     const unit = ago?.[2] ?? "day";
+    // counted on the local calendar, like every other date here ("today" at 01:00 IST is still today)
     const d = new Date(now);
-    if (unit === "year") d.setUTCFullYear(d.getUTCFullYear() - n);
-    else if (unit === "month") d.setUTCMonth(d.getUTCMonth() - n);
-    else d.setTime(d.getTime() - n * { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5 }[unit]!);
-    return d.toISOString().slice(0, 10);
+    if (unit === "year" || unit === "month") {
+      const day = d.getDate();
+      d.setDate(1);
+      if (unit === "year") d.setFullYear(d.getFullYear() - n);
+      else d.setMonth(d.getMonth() - n);
+      d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); // Mar 31 - 1 month → Feb 28
+    } else d.setTime(d.getTime() - n * { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5 }[unit]!);
+    return ymd(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
+  // ISO with a time: the date the source wrote ("2026-10-06T02:00+05:30" is Oct 6 where it was posted)
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
   const t = Date.parse(s);
   if (Number.isNaN(t)) return s;
   const d = new Date(t);
-  // a time with a zone (ISO "…Z" / "+05:30") is an instant: take its UTC date; otherwise it was parsed as local
-  // midnight, so read the local calendar date back
-  return /\d:\d{2}.*(z|[+-]\d{2}:?\d{2})$/i.test(s) ? d.toISOString().slice(0, 10) : ymd(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  // parsed as local midnight, so read the local calendar date back
+  return ymd(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
+
+// US state and Canadian province codes: the only two-letter words a comma in a list should not split before
+const REGION_CODES =
+  "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|ON|QC|BC|AB|MB|SK|NS|NB|NL|PE";
 
 export function cleanValue(f: FieldSpec, v: unknown): unknown {
   if (v == null) return null;
@@ -106,7 +149,8 @@ export function cleanValue(f: FieldSpec, v: unknown): unknown {
       return cleanDate(v);
     case "list":
       if (Array.isArray(v)) return v.map((x) => (typeof x === "object" && x ? JSON.stringify(x) : String(x)).trim()).filter(Boolean).slice(0, 12);
-      return String(v).split(/[;|]|,(?! [A-Z]{2}\b)/).map((x) => x.trim()).filter(Boolean).slice(0, 12);
+      // "San Francisco, CA" stays one item; "Python, ML, AI" is three
+      return String(v).split(new RegExp(`[;|]|,(?! (?:${REGION_CODES})\\b)`)).map((x) => x.trim()).filter(Boolean).slice(0, 12);
     default:
       return typeof v === "object" ? JSON.stringify(v) : String(v).slice(0, 1000);
   }
