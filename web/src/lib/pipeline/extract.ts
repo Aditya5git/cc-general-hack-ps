@@ -1,6 +1,7 @@
 import { LLMError, LLMOutputError, llmJSON } from "../llm";
 import type { RawItem, WorkflowPlan } from "../types";
 import { focusText, planTerms } from "./focus";
+import { identityField } from "./validate";
 import { UNTRUSTED_RULE, untrusted } from "./untrusted";
 
 export interface Extracted {
@@ -184,20 +185,51 @@ const SYNONYMS: Record<string, string[]> = {
   title: ["title", "name"],
   url: ["url", "apply_url", "homepage", "hn_url"],
   website: ["homepage", "url"],
-  description: ["description", "summary"],
+  description: ["description", "summary", "snippet"],
   company: ["company", "company_name", "owner"],
+  salary: ["salary", "salary_range", "compensation"],
+  location: ["location", "candidate_required_location", "headquarters"],
+  posted_at: ["posted_at", "published_at", "created_at", "updated_at"],
 };
+
+const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const filled = (v: unknown) => v != null && v !== "" && !(Array.isArray(v) && !v.length);
+
+/**
+ * The item field that best fits a plan column. Planner names vary (job_title, repository_url, company_name), so
+ * after exact names and synonyms, a source key must share the column's last word (the attribute: title, url,
+ * name...); among those, the one sharing the most words wins. job_title → title, never job_type.
+ */
+function sourceKeyFor(column: string, src: Record<string, unknown>): string | undefined {
+  const direct = [column, ...(SYNONYMS[column] ?? [])].find((k) => filled(src[k]));
+  if (direct) return direct;
+  const cw = words(column);
+  const attr = cw[cw.length - 1];
+  const tail = SYNONYMS[attr]?.find((k) => filled(src[k])); // e.g. hq_location → location synonyms
+  if (tail) return tail;
+  let best: { key: string; score: number } | undefined;
+  for (const [key, v] of Object.entries(src)) {
+    const kws = words(key);
+    if (!filled(v) || !kws.includes(attr)) continue;
+    // more shared words first; on a tie, a key made only of the column's words (name ⊂ repository_name)
+    const score = kws.filter((w) => cw.includes(w)).length * 2 + (kws.every((w) => cw.includes(w)) ? 1 : 0);
+    if (!best || score > best.score) best = { key, score };
+  }
+  return best?.key;
+}
 
 /** Heuristic mapping when no LLM is available. */
 function heuristicMap(plan: WorkflowPlan, it: RawItem, kw: string[]): Extracted {
-  const src = { ...(it.fields ?? {}), title: it.fields?.title ?? it.title, url: it.fields?.url ?? it.url };
+  const src: Record<string, unknown> = { ...(it.fields ?? {}), title: it.fields?.title ?? it.title, url: it.fields?.url ?? it.url };
+  const idField = identityField(plan);
   const data: Record<string, unknown> = {};
   for (const f of plan.fields) {
-    const keys = [f.name, ...(SYNONYMS[f.name] ?? [])];
-    let v: unknown = null;
-    for (const k of keys) if (src[k as keyof typeof src] != null && src[k as keyof typeof src] !== "") { v = src[k as keyof typeof src]; break; }
-    if (v == null && f.name === "description") v = it.text?.slice(0, 280) || null;
+    const key = sourceKeyFor(f.name, src);
+    let v: unknown = key ? src[key] : null;
+    if (v == null && /description|summary/.test(f.name)) v = it.text?.slice(0, 280) || null;
     if (v == null && f.type === "url") v = it.url;
+    // the naming column must never be empty, or validation drops the row as unnamed
+    if (v == null && f.name === idField) v = it.title || null;
     data[f.name] = v;
   }
   const hay = `${it.title} ${it.text} ${JSON.stringify(it.fields ?? {})}`.toLowerCase();
