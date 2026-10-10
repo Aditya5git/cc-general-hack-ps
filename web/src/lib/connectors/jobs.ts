@@ -55,6 +55,26 @@ function matchJobs<T>(items: T[], query: string, parts: (t: T) => { title: strin
     .map((x) => x.it);
 }
 
+// Pay in English and German (Arbeitnow): a salary-sized amount (3+ digits or "90k") next to a currency or pay word.
+const MONEY = /[$€£₹]\s?\d|\d\s?[$€£₹]|\b(usd|eur|gbp|chf|inr)\s?\d|\d\s?(usd|eur|gbp|chf|inr)\b/i;
+const AMOUNT = /(\d[\d,.\s]*\d\d|\d{2,3}\s?k\b)(?!\s?%)/i; // "100%" is not an amount
+const PAY_WORD = /\b(salary|salaries|compensation|pay|wage|stipend|ctc|lpa|gehalt|vergütung|bezahlung)\b|per (year|annum|month|hour)|\/\s?(yr|year|month|hr|hour)\b/i;
+// Money that isn't the job's pay: funding, market size, product prices, perks
+const NOT_PAY = /\d\s?[mb]\b|million|billion|\b(raised|funding|valuation|revenue|market|series [a-e]|investors?|paid out|offer|start for|price|allowance|voucher|gutschein|ticket|coupon|discount|holiday|vacation|urlaub|coworking|401\s?\(?k\)?)/i;
+
+/**
+ * Job APIs often leave salary empty and state it deep in the description, but extraction only reads the start of
+ * an API item's text. Put the sentences that state pay at the front so the AI sees them.
+ */
+function payFirst(text: string): string {
+  const pay = text
+    .split(/[.!?]\s+|\n+|\\n/) // some feeds keep "\n" as literal text
+    .map((s) => s.trim())
+    .filter((s) => s.length > 8 && s.length < 300 && AMOUNT.test(s) && (MONEY.test(s) || PAY_WORD.test(s)) && !NOT_PAY.test(s))
+    .slice(0, 3);
+  return pay.length ? `Pay mentioned: ${pay.join(" … ")}`.slice(0, 350) + `\n\n${text}` : text;
+}
+
 // ---------------- Remotive ----------------
 interface RemotiveJob {
   id: number;
@@ -103,7 +123,7 @@ export async function remotiveJobs(query: string, limit: number): Promise<Connec
       source: "remotive_jobs",
       url: j.url,
       title: `${j.title} — ${j.company_name}`,
-      text: clip(text, 4000),
+      text: clip(j.salary ? text : payFirst(text), 4000),
       fields,
       published_at: j.publication_date,
     };
@@ -147,7 +167,7 @@ export async function arbeitnowJobs(query: string, limit: number): Promise<Conne
       source: "arbeitnow_jobs",
       url: j.url,
       title: `${j.title} — ${j.company_name}`,
-      text: clip(htmlToText(j.description), 4000),
+      text: clip(payFirst(htmlToText(j.description)), 4000), // Arbeitnow has no salary field
       fields: {
         title: j.title,
         company: j.company_name,
@@ -204,7 +224,7 @@ export async function remoteokJobs(query: string, limit: number): Promise<Connec
       source: "remoteok_jobs",
       url: pageUrl,
       title: `${j.position} — ${j.company}`,
-      text: clip(desc.get(j) ?? "", 4000),
+      text: clip(salary ? (desc.get(j) ?? "") : payFirst(desc.get(j) ?? ""), 4000),
       fields: {
         title: j.position,
         company: j.company,
