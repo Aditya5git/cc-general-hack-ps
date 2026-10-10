@@ -26,6 +26,8 @@ export async function setStatus(
   extra: { plan?: unknown; title?: string; stats?: unknown; error?: string } = {},
 ) {
   const done = status === "completed" || status === "failed" || status === "cancelled";
+  // a run passes its stats: once a newer run is stamped (Stop, then Resume), the old one can't overwrite its status
+  const run = (extra.stats as { run_started_at?: string } | undefined)?.run_started_at ?? null;
   await sql`UPDATE workflows SET
       status = ${status},
       progress = ${progress},
@@ -35,7 +37,8 @@ export async function setStatus(
       error = ${extra.error ?? null},
       updated_at = now(),
       finished_at = ${done ? new Date().toISOString() : null}
-    WHERE id = ${workflowId} AND (status <> 'cancelled' OR ${status} = 'queued')`;
+    WHERE id = ${workflowId} AND (status <> 'cancelled' OR ${status} = 'queued')
+      AND (${run}::timestamptz IS NULL OR COALESCE((stats->>'run_started_at')::timestamptz <= ${run}::timestamptz, true))`;
 }
 
 /**
@@ -47,6 +50,8 @@ export async function claimRun(workflowId: string, from: WorkflowStatus[], to: W
       status = ${to},
       progress = ${progress},
       plan = COALESCE(${plan ? JSON.stringify(plan) : null}::jsonb, plan),
+      -- stamp the new run now, so a stopped run still finishing a step can't mark this one completed
+      stats = jsonb_set(stats, '{run_started_at}', to_jsonb(now())),
       error = NULL,
       updated_at = now(),
       finished_at = NULL
@@ -71,6 +76,15 @@ export async function assertNotCancelled(workflowId: string, runStartedAt?: stri
 }
 
 const RUNNING = ["queued", "planning", "collecting", "processing"];
+/**
+ * Delete a workflow unless a run is in progress (it would keep spending LLM/Firecrawl calls, then fail writing to
+ * rows that are gone). One statement, so a run can't start between check and delete. False = still running.
+ */
+export async function deleteIdleWorkflow(workflowId: string) {
+  const rows = await sql`DELETE FROM workflows WHERE id = ${workflowId} AND status <> ALL(${RUNNING}) RETURNING id`;
+  return rows.length > 0;
+}
+
 /** Runs execute inside a serverless request; if it dies, nothing else would ever finish them. */
 export async function failStuckWorkflows(minutes = 8) {
   await sql`UPDATE workflows SET status = 'failed', progress = 100, finished_at = now(), updated_at = now(),

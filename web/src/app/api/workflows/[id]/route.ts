@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { failStuckWorkflows, logEvent, sql } from "@/lib/db";
+import { deleteIdleWorkflow, failStuckWorkflows, logEvent, sql } from "@/lib/db";
 import { authorize } from "@/lib/auth/access";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,8 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const access = await authorize(id, "write");
   if (access instanceof Response) return access;
-  await sql`DELETE FROM workflows WHERE id = ${id}`;
+  if (!(await deleteIdleWorkflow(id)))
+    return NextResponse.json({ error: "This workflow is still running. Stop it first, then delete it." }, { status: 409 });
   return NextResponse.json({ ok: true });
 }
 
