@@ -1,4 +1,4 @@
-import { llmJSON } from "../llm";
+import { LLMError, llmJSON } from "../llm";
 import type { RawItem, WorkflowPlan } from "../types";
 import { focusText, planTerms } from "./focus";
 import { UNTRUSTED_RULE, untrusted } from "./untrusted";
@@ -23,7 +23,8 @@ const PAGE_TEXT = 2500;
 const PAGE_SOURCES = new Set<RawItem["source"]>(["web_search", "url_fetch", "wikipedia"]);
 // Items per LLM call. Env override exists for quota-limited runs (eval --lite); read at call time.
 const batchSize = () => Math.min(Math.max(Number(process.env.EXTRACT_BATCH) || 6, 1), 20);
-const CONCURRENCY = 4;
+// Two batches at a time: four in parallel tripped per-minute rate limits on free LLM tiers.
+const CONCURRENCY = 2;
 
 /** "published: 2026-09-18 (15 days ago)" so the model never has to do date arithmetic for recency checks. */
 function published(it: RawItem) {
@@ -174,11 +175,18 @@ export async function extractAll(
           else llmBatches++;
         } catch (e) {
           const msg = (e as Error).message;
-          if (/402|credits/i.test(msg)) llmAvailable = false; // don't keep hammering an empty balance
-          await onProgress(done, batches.length, `LLM batch failed (${msg.slice(0, 120)}), using heuristic mapping`).catch((err) => {
-            stopped = true;
-            throw err;
-          });
+          // llmJSON already tried every provider: on a rate limit, empty balance or bad key, stop asking for
+          // the rest of this run instead of failing the same way on every remaining batch
+          const quotaHit = e instanceof LLMError && [401, 402, 403, 429].includes(e.status ?? 0);
+          const note = quotaHit
+            ? llmAvailable && `AI limit reached on every provider (${msg.slice(0, 120)}), so the remaining pages are matched by keywords`
+            : `LLM batch failed (${msg.slice(0, 120)}), using heuristic mapping`;
+          if (quotaHit) llmAvailable = false;
+          if (note)
+            await onProgress(done, batches.length, note).catch((err) => {
+              stopped = true;
+              throw err;
+            });
         }
       }
       rows.push(...(out ?? batch.map((it) => heuristicMap(plan, it, kw))));
