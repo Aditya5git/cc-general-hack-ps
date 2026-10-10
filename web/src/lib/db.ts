@@ -85,8 +85,14 @@ export async function deleteIdleWorkflow(workflowId: string) {
   return rows.length > 0;
 }
 
+// Called on every list/detail poll (every 1.5–5s per open page); a run only counts as stuck after minutes, so once a
+// minute per server instance is plenty.
+let lastStuckCheck = 0;
+
 /** Runs execute inside a serverless request; if it dies, nothing else would ever finish them. */
 export async function failStuckWorkflows(minutes = 6) {
+  if (Date.now() - lastStuckCheck < 60_000) return;
+  lastStuckCheck = Date.now();
   await sql`UPDATE workflows SET status = 'failed', progress = 100, finished_at = now(), updated_at = now(),
       error = 'This run was interrupted (the server restarted or timed out). Use Rerun or Refresh to try again.'
     WHERE status = ANY(${RUNNING}) AND updated_at < now() - make_interval(mins => ${minutes})`;
