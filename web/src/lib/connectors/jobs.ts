@@ -31,7 +31,9 @@ function matchJobs<T>(items: T[], query: string, parts: (t: T) => { title: strin
   const specific = words.some((w) => !GENERIC.has(w)) ? words.filter((w) => !GENERIC.has(w)) : words;
   const squash = (s: string) => s.replace(/[-\s]+/g, "");
   // "front-end" / "front end" match "frontend"; only for longer words, where joining can't fake a match
-  const has = (hay: string, w: string) => hay.includes(w) || (w.length >= 5 && squash(hay).includes(w));
+  // short words match whole words only: "ai" mustn't hit "maintenance", nor "go" hit "google"
+  const short = new Map(words.filter((w) => w.length <= 3).map((w) => [w, new RegExp(`(^|[^a-z0-9])${w.replace(/[+#.]/g, "\\$&")}(?![a-z0-9])`)]));
+  const has = (hay: string, w: string) => short.get(w)?.test(hay) ?? (hay.includes(w) || (w.length >= 5 && squash(hay).includes(w)));
   const scored = items.map((it, i) => {
     const p = parts(it);
     const [title, tags, text] = [p.title.toLowerCase(), p.tags.toLowerCase(), (p.text ?? "").toLowerCase()];
