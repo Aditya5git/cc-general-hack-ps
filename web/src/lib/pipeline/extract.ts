@@ -1,6 +1,6 @@
 import { LLMError, LLMOutputError, llmJSON } from "../llm";
 import type { RawItem, WorkflowPlan } from "../types";
-import { focusText, keywordTerms, planTerms } from "./focus";
+import { focusText, hasKeyword, keywordTerms, planTerms } from "./focus";
 import { identityField } from "./validate";
 import { UNTRUSTED_RULE, untrusted } from "./untrusted";
 
@@ -221,7 +221,21 @@ function sourceKeyFor(column: string, src: Record<string, unknown>): string | un
 
 // A page whose title announces a list ("Top 50 IT companies", "List of unicorns") holds many entities; only the
 // AI can pull them out, so without it the page itself must not become a row.
-const LIST_PAGE = /\b(top|best|largest|biggest|leading|list|lists|ranking|rankings)\b|^\s*\d+\s|\b(ten|twenty|fifty|hundred)\b/i;
+// Only real list shapes: "Top 50 …", "26 IT companies in India", "Top IT companies 2026", "List of …", "The ten largest
+// …". Not names that merely contain the words (Top Hat, Best Buy, Twenty One Pilots), years or HN threads.
+const LIST_NOUNS =
+  "companies|startups|firms|brands|tools|apps|websites|sites|platforms|jobs|roles|coins|cryptocurrencies|tokens|databases|libraries|frameworks|repos|repositories|people|founders|ideas|examples|products|services|providers|vendors|agencies|universities|colleges|schools|cities|countries|books|games|movies";
+const LIST_PAGE = new RegExp(
+  [
+    String.raw`\blist of\b`,
+    String.raw`^\s*(lists?|rankings?)\b`,
+    String.raw`\b(top|best|largest|biggest|leading)\s+\d{1,3}\b`,
+    String.raw`^\s*(?!(?:19|20)\d{2}\b)\d{1,3}\s+(?:[\w.-]+\s+){0,3}(?:${LIST_NOUNS})\b`,
+    String.raw`^\s*(?:the\s+)?(top|best|largest|biggest|leading)\s+(?:[\w.-]+\s+){0,3}(?:${LIST_NOUNS})\b`,
+    String.raw`\b(ten|twenty|fifty|hundred)\s+(best|top|largest|biggest|leading)\b`,
+  ].join("|"),
+  "i",
+);
 
 /** Heuristic mapping when no LLM is available. */
 function heuristicMap(plan: WorkflowPlan, it: RawItem, kw: string[]): Extracted {
@@ -238,7 +252,7 @@ function heuristicMap(plan: WorkflowPlan, it: RawItem, kw: string[]): Extracted 
     data[f.name] = v;
   }
   const hay = `${it.title} ${it.text} ${JSON.stringify(it.fields ?? {})}`.toLowerCase();
-  const matched = kw.filter((k) => new RegExp(`(^|[^a-z0-9])${k.replace(/[+#.]/g, "\\$&")}`).test(hay));
+  const matched = kw.filter((k) => hasKeyword(hay, k));
   // share of the request's keywords found; nothing matched → 0, below the validator's drop threshold
   const listPage = PAGE_SOURCES.has(it.source) && LIST_PAGE.test(it.title);
   return {

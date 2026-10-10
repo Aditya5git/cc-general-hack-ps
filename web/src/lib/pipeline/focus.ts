@@ -9,15 +9,27 @@ const STOP = new Set(
     .split(" "),
 );
 
-// Words that say how much or how good, not what: they match almost any page, so keyword scoring ignores them.
+// Words that say how much, how good or what to do, not what: they match almost any page (or none), so keyword
+// scoring ignores them.
 const FILLER = new Set(
-  "largest biggest top best leading list lists info information details data latest recent new popular famous good great various several many".split(" "),
+  ("largest biggest top best leading list lists info information details data latest recent new popular famous good great various several many " +
+    "find collect retrieve get show give want need fetch gather search looking explicitly include including along their them they major metrics using use based plus")
+    .split(" "),
 );
+
+/** "agents" → "agent", "cryptocurrencies" → "cryptocurrenc": matched as a word start, so singular and plural both hit. */
+const stem = (w: string) => (w.length > 4 && w.endsWith("ies") ? w.slice(0, -3) : w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
 
 /** The words that say what the user is after (intent + entity), for keyword matching when no LLM is available. */
 export function keywordTerms(plan: WorkflowPlan): string[] {
   const words = `${plan.intent} ${plan.entity}`.toLowerCase().match(/[a-z0-9+#]{2,}/g) ?? [];
-  return [...new Set(words.filter((w) => !STOP.has(w) && !FILLER.has(w)))].slice(0, 8);
+  return [...new Set(words.filter((w) => !STOP.has(w) && !FILLER.has(w) && !/^\d+$/.test(w)).map(stem))].slice(0, 8);
+}
+
+/** Does `text` (lowercase) contain keyword `k`? Short words (ai, go, ui) must be whole words, or "ai" hits "maintain". */
+export function hasKeyword(text: string, k: string): boolean {
+  const word = k.replace(/[+#.]/g, "\\$&");
+  return new RegExp(k.length <= 3 ? `(^|[^a-z0-9])${word}([^a-z0-9]|$)` : `(^|[^a-z0-9])${word}`).test(text);
 }
 
 const PASSAGE_CHARS = 320;

@@ -183,6 +183,9 @@ function score(plan: WorkflowPlan, idField: string, data: Record<string, unknown
 
 // Rows the extractor (or keyword fallback) scores below this are not the requested thing.
 const MIN_RELEVANCE = 0.4;
+// Keyword rows score the share of request words they contain: a right row often has 2 of 8 (0.25), so they get
+// their own, lower bar; one stray word out of 8 (0.125) still fails.
+const KEYWORD_MIN_RELEVANCE = 0.2;
 
 /**
  * Rows that fail a detail filter are kept, marked ✗ in their checks, at half confidence so they sort below rows
@@ -213,7 +216,8 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
     // ("must be a React role"): a sales job is not a weaker match for "React jobs", it is no match.
     const failed = plan.filters.filter((_, i) => r.checks?.[i] === false);
     const offSubject = failed.some((f) => subject.has(f));
-    if (data[idField] == null || r.relevance < MIN_RELEVANCE || offSubject) {
+    const minRelevance = r.method === "keyword" ? KEYWORD_MIN_RELEVANCE : MIN_RELEVANCE;
+    if (data[idField] == null || r.relevance < minRelevance || offSubject) {
       if (data[idField] == null) reasons.no_name++;
       else reasons.irrelevant++;
       invalid++;
