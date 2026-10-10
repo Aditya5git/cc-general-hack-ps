@@ -29,7 +29,7 @@ export function MatchCell({ record, criteria }: { record: DataRecord; criteria: 
       {checks.length > 0 && (
         <span className="flex shrink-0 items-center gap-0.5 rounded bg-white/[0.04] px-1 py-0.5">
           {checks.map((c, i) => (
-            <span key={i} title={`${criteria[i] ?? `Criterion ${i + 1}`}: ${stateLabel(c)}`}>
+            <span key={i} title={`${criteria[i] ?? `Criterion ${i + 1}`}: ${stateLabel(c)} (AI judgment)`}>
               <CheckIcon value={c} />
             </span>
           ))}
@@ -113,7 +113,7 @@ export function Evidence({ record, fields }: { record: DataRecord; fields: Field
           }
         >
           {verified ? <BadgeCheck className="h-3 w-3" /> : <HelpCircle className="h-3 w-3" />}
-          {keyword ? "Picked by keyword match, not by AI" : verified ? "Found word-for-word in source" : "Paraphrased, not verbatim"}
+          {keyword ? "Picked by keyword match, not by AI" : verified ? "Quote found in source" : "Not found in source"}
         </span>
       </div>
       <blockquote className="mt-2 border-l-2 border-zinc-600 pl-3 text-sm italic leading-relaxed text-zinc-300">“{highlight(quote, terms)}”</blockquote>

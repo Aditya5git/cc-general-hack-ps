@@ -55,6 +55,19 @@ export function Cell({ value, type, full = false }: { value: unknown; type?: Fie
       </a>
     );
   }
+  if (type === "date") {
+    // Year-only and date-only values have no time of day; new Date() would read them as UTC midnight
+    // and the local timezone could shift them (2024 → 12/31/2023). Show them without conversion.
+    const s = String(value).trim();
+    if (/^\d{4}$/.test(s)) return <span className="whitespace-nowrap tabular-nums">{s}</span>;
+    if (/^\d{4}-\d{2}(-\d{2})?$/.test(s)) {
+      const d = new Date(s);
+      if (!Number.isNaN(d.getTime())) {
+        const opts: Intl.DateTimeFormatOptions = s.length === 7 ? { timeZone: "UTC", year: "numeric", month: "short" } : { timeZone: "UTC" };
+        return <span className="whitespace-nowrap" title={s}>{d.toLocaleDateString(undefined, opts)}</span>;
+      }
+    }
+  }
   if (type === "number" || typeof value === "number") {
     return <span className="tabular-nums">{formatValue(value)}</span>;
   }
@@ -77,7 +90,7 @@ export function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round((value <= 1 ? value * 100 : value) || 0);
   const color = pct >= 75 ? "bg-success" : pct >= 50 ? "bg-running" : "bg-danger";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" title="Heuristic score: relevance + filled columns. Not a probability.">
       <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/5">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>

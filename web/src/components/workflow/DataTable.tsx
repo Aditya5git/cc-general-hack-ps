@@ -276,7 +276,7 @@ export function DataTable({
                 ))}
                 {hasMatch && sortHead("__match", "Why it matched")}
                 {sortHead("__source", "Source")}
-                {sortHead("__confidence", "Confidence")}
+                {sortHead("__confidence", "Match score", false, "Heuristic score: relevance + filled columns. Not a probability.")}
               </tr>
             </thead>
             <tbody>

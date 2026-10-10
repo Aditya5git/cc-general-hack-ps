@@ -31,11 +31,11 @@ const FEATURES = [
   { icon: Workflow, title: "Mission control", body: "Watch the planner, each source, the extractor and the validator work live, with rows streaming into the table." },
   { icon: MessageSquareText, title: "Ask your data", body: "Ask questions in plain English; answers cite the rows they used so you can check them." },
   { icon: Eye, title: "Watch for changes", body: "Refresh a dataset or put it on a schedule. New rows are badged; removed ones are counted." },
-  { icon: Download, title: "Yours to keep", body: "Full history of every workflow and dataset, exportable as CSV or JSON with sources attached." },
+  { icon: Download, title: "Yours to keep", body: "Every workflow is kept; refresh updates in place. Export as CSV or JSON with sources attached." },
 ];
 
 const HONEST = [
-  { icon: Globe, text: "Public APIs and the open web only, robots.txt respected" },
+  { icon: Globe, text: "Public APIs and the open web only. Pages we read are checked against robots.txt" },
   { icon: ShieldCheck, text: "Scraped text is treated as untrusted; internal addresses are never fetched" },
   { icon: BadgeCheck, text: "Quotes are verified in code; condition checks are AI judgments and labelled as such" },
 ];
@@ -85,14 +85,14 @@ export default function Landing() {
         <div className="relative z-10 mx-auto max-w-[860px] px-4 pt-28 text-center sm:px-6 md:pt-36">
           <span className="glass inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12.5px] text-zinc-300">
             <span className="mc-dot h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
-            Multi-agent data collection · every row source-backed
+            AI-planned pipeline · every row source-backed
           </span>
           <h1 id="lp-title" className="mt-7 text-[42px] font-semibold leading-[1.04] tracking-[-0.035em] text-zinc-50 sm:text-[68px]">
             Turn a sentence into
-            <br />a verified dataset
+            <br />a cited dataset
           </h1>
           <p className="mx-auto mt-6 max-w-[560px] text-[16px] leading-relaxed text-zinc-300">
-            Describe the data your business needs. AI agents plan the collection, gather it from permitted sources, and hand you a clean
+            Describe the data your business needs. AI plans the collection, gathers it from permitted sources, and hands you a clean
             table where every row proves where it came from.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -120,7 +120,7 @@ export default function Landing() {
               <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
             </span>
             <span className="mx-auto rounded-md bg-zinc-50/[0.04] px-3 py-1 font-mono text-[11px] text-zinc-500">datapilot / workflows / remote-react-jobs</span>
-            <span className="hidden text-[11px] text-zinc-600 sm:inline">sample run</span>
+            <span className="text-[11px] text-zinc-600">sample run</span>
           </div>
           <DemoRun />
         </div>
