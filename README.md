@@ -15,7 +15,7 @@ prompt ──▶ Planner (LLM) ──▶ workflow plan: schema + source steps + 
         Extractor (LLM, batched) ──▶ rows matching the schema, with relevance score
             │
             ▼
-        Validator: type coercion, required fields, URL/email/date checks, dedupe + merge, match score
+        Validator: type coercion, URL/email/date checks, dedupe + merge, match score
             │
             ▼
         Neon Postgres: workflows · events · sources · records (each row keeps source + URL + fetched_at)

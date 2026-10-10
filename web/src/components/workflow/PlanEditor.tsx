@@ -177,6 +177,7 @@ export function PlanEditor({ workflowId, plan, onStarted }: { workflowId: string
           <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-medium text-zinc-300">
             <Filter className="h-3.5 w-3.5 text-zinc-500" aria-hidden /> Check each row for
           </h3>
+          {filters.length > 0 && <p className="-mt-1 mb-2 text-[11.5px] text-zinc-500">Rows that fail the main subject are removed; others are marked ✗.</p>}
           <ul className="space-y-1">
             {filters.map((f, i) => (
               <li key={i} className="flex items-start gap-2 rounded-md px-1 py-1 text-[13px] text-zinc-200 hover:bg-zinc-50/[0.03]">

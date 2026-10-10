@@ -92,7 +92,7 @@ export default function Landing() {
             <br />a cited dataset
           </h1>
           <p className="mx-auto mt-6 max-w-[560px] text-[16px] leading-relaxed text-zinc-300">
-            Describe the data your business needs. AI agents plan the collection, gather it from permitted sources, and hand you a clean
+            Describe the data your business needs. AI plans the collection, gathers it from permitted sources, and hands you a clean
             table where every row proves where it came from.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -120,7 +120,7 @@ export default function Landing() {
               <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
             </span>
             <span className="mx-auto rounded-md bg-zinc-50/[0.04] px-3 py-1 font-mono text-[11px] text-zinc-500">datapilot / workflows / remote-react-jobs</span>
-            <span className="text-[11px] text-zinc-600 sm:inline">sample run</span>
+            <span className="text-[11px] text-zinc-600">sample run</span>
           </div>
           <DemoRun />
         </div>
