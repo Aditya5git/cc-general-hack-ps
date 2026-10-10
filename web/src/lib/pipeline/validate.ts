@@ -1,4 +1,4 @@
-import { CHECKS_KEY, METHOD_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DropReasons, type FieldSpec, type WorkflowPlan } from "../types";
+import { CHECKS_KEY, FIELD_SOURCES_KEY, METHOD_KEY, QUOTE_KEY, QUOTE_OK_KEY, WHY_KEY, type DropReasons, type FieldSpec, type WorkflowPlan } from "../types";
 import type { Extracted } from "./extract";
 
 export interface CleanRow {
@@ -232,8 +232,11 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
       data[CHECKS_KEY] = plan.filters.map((_, i) => (typeof r.checks![i] === "boolean" ? r.checks![i] : null));
 
     const keyFields = plan.dedupe_on.length ? plan.dedupe_on : [plan.fields[0].name];
-    let key = keyFields.map((k) => norm(data[k])).join("|");
-    if (!key.replace(/\|/g, "")) key = norm(r.item.url);
+    const parts = keyFields.map((k) => norm(data[k]));
+    let key = parts.join("|");
+    if (parts.every((p) => !p)) key = norm(r.item.url);
+    // a half-empty key ("senior react developer|") would merge different companies' jobs: only within one page
+    else if (parts.some((p) => !p)) key += `|${norm(r.item.url)}`;
 
     const row: CleanRow = {
       data,
@@ -248,7 +251,16 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
       // keep the more complete/confident row, merge in any missing fields, then score the merged row
       const mine = { relevance: r.relevance, failed: failed.length };
       const [keep, other, b] = row.confidence > prev.confidence ? [row, prev, mine] : [prev, row, basis.get(row.dedupe_key)!];
-      for (const k of Object.keys(keep.data)) if (keep.data[k] == null) keep.data[k] = other.data[k];
+      // fill only schema columns (the kept row's quote, why and checks describe its own page) and remember which
+      // page each borrowed value came from, since the row's source link points at the kept row's page
+      const borrowed = { ...((keep.data[FIELD_SOURCES_KEY] as Record<string, string>) ?? {}) };
+      for (const f of plan.fields) {
+        if (keep.data[f.name] != null || other.data[f.name] == null) continue;
+        keep.data[f.name] = other.data[f.name];
+        const from = (other.data[FIELD_SOURCES_KEY] as Record<string, string> | undefined)?.[f.name] ?? other.source_url;
+        if (from !== keep.source_url) borrowed[f.name] = from;
+      }
+      if (Object.keys(borrowed).length) keep.data[FIELD_SOURCES_KEY] = borrowed;
       keep.confidence = score(plan, idField, keep.data, b.relevance, b.failed);
       out.set(row.dedupe_key, keep);
       basis.set(row.dedupe_key, b);

@@ -23,7 +23,11 @@ async function syncRecords(id: string, clean: CleanRow[], prune?: { since: strin
       FROM jsonb_to_recordset(${JSON.stringify(clean)}::jsonb)
         AS x(data jsonb, source_name text, source_url text, confidence real, dedupe_key text)
       ON CONFLICT (workflow_id, dedupe_key) DO UPDATE SET
-        data = records.data || EXCLUDED.data, source_name = EXCLUDED.source_name,
+        -- AI-column answers and other columns survive (||), but _quote/_why/_checks/... from the previous run are replaced,
+        -- never mixed with the new ones: they describe one page, the one in source_url
+        data = (SELECT COALESCE(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(records.data) AS e(k, v) WHERE left(k, 1) <> '_')
+          || EXCLUDED.data,
+        source_name = EXCLUDED.source_name,
         source_url = EXCLUDED.source_url, confidence = EXCLUDED.confidence`;
   }
   if (!prune) return 0;
