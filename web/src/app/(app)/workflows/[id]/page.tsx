@@ -56,6 +56,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const [busy, setBusy] = useState<"rerun" | "refresh" | "delete" | "stop" | null>(null);
   const [pollKey, setPollKey] = useState(0); // bump to resume polling after review/refresh
   const [cited, setCited] = useState<number[] | null>(null);
+  const [now, setNow] = useState(() => Date.now()); // ticks while running so the "stuck" check re-evaluates
   const [showBuild, setShowBuild] = useState(true); // "How this dataset was built": opens while a run is in progress, collapses when it finishes
   const lastRecordFetch = useRef(0);
 
@@ -92,6 +93,12 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
     setPrevRunning(running);
     setShowBuild(running);
   }
+
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(t);
+  }, [running]);
 
   // Poll workflow detail while running
   useEffect(() => {
@@ -212,6 +219,10 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const recordCount = detail.record_count ?? w.record_count ?? records.length;
   const sourcesOk = s.sources_ok ?? detail.sources.filter((x) => x.status === "ok").length;
   const sourcesFailed = s.sources_failed ?? detail.sources.filter((x) => x.status === "failed").length;
+  // Last sign of life: the row's updated_at (stage changes, batches) or the newest log event (each source start/finish).
+  // Collecting can run a long time between stage changes, so updated_at alone would cry "stuck" too early.
+  const lastActivity = Math.max(new Date(w.updated_at).getTime() || 0, new Date(detail.events.at(-1)?.created_at ?? 0).getTime() || 0);
+  const stuck = running && now - lastActivity > 90_000;
   const sourcesTotal = sourcesOk + sourcesFailed;
 
   return (
@@ -265,6 +276,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[22px] font-semibold text-zinc-100">{w.title || w.plan?.title || w.prompt}</h1>
           <StatusBadge status={w.status} />
+          {error && <span className="text-[12px] text-zinc-500">reconnecting…</span>}
           {!canEdit && (
             <span
               className="rounded-full border border-line-strong px-2 py-0.5 text-[11.5px] text-zinc-400"
@@ -307,6 +319,24 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
             </span>
           </div>
           <ProgressBar value={w.progress} />
+        </div>
+      )}
+
+      {stuck && (
+        <div className="mt-3 flex items-start gap-3 rounded-lg border border-line bg-canvas px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-zinc-200">This run seems stuck</p>
+            <p className="mt-0.5 text-[12.5px] text-zinc-500">No progress for over a minute. You can start it again as a new run.</p>
+          </div>
+          <button
+            type="button"
+            onClick={rerun}
+            disabled={busy !== null}
+            className="h-7 shrink-0 rounded-md bg-zinc-50 px-2.5 text-[12.5px] font-medium text-zinc-950 hover:bg-zinc-200 disabled:opacity-40"
+          >
+            Retry
+          </button>
         </div>
       )}
 
