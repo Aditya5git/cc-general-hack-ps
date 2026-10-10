@@ -156,7 +156,21 @@ interface CgMarket {
   last_updated?: string;
 }
 
-const GENERIC_CRYPTO = /^(top|crypto|cryptocurrenc(y|ies)|coins?|tokens?|market|markets|cap|by|largest|biggest|price|prices|\d+|all|the|of|and|list)$/i;
+// Words that aren't coin names. Anything else is looked up as a coin, and CoinGecko's search always returns
+// something: "in" → Bitcoin, "usd" → Tether, "defi" → Definitive, which replaced the top-coins list with them.
+const GENERIC_CRYPTO = new RegExp(
+  "^(" +
+    [
+      "top", "crypto", "cryptocurrenc(y|ies)", "coins?", "tokens?", "market", "markets", "cap", "by", "largest", "biggest",
+      "price", "prices", "\\d+", "all", "the", "of", "and", "list", "in", "on", "for", "with", "to", "a", "an",
+      "usd", "eur", "inr", "gbp", "dollars?", "rupees?", "euros?",
+      "defi", "meme", "memecoins?", "layer", "layer-?[12]", "l[12]", "stablecoins?", "altcoins?",
+      "today", "current", "currently", "latest", "now", "live", "value", "values", "rank", "ranking", "rankings",
+      "volume", "trending", "best", "popular", "new", "highest", "most",
+    ].join("|") +
+    ")$",
+  "i",
+);
 
 export async function coingecko(query: string, limit: number): Promise<ConnectorResult> {
   try {
