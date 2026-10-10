@@ -31,6 +31,7 @@ export default function WorkflowsPage() {
   const [filter, setFilter] = useState<string>("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null); // shown inline instead of a browser alert
+  const [confirmId, setConfirmId] = useState<string | null>(null); // row showing "Delete with all records?" inline instead of a browser confirm
 
   const load = useCallback(async () => {
     try {
@@ -76,7 +77,7 @@ export default function WorkflowsPage() {
   }
 
   async function remove(w: Workflow) {
-    if (!confirm(`Delete workflow "${w.title || w.prompt}"? This removes all its records.`)) return;
+    setConfirmId(null);
     setBusy(w.id);
     try {
       await fetchJSON(`/api/workflows/${w.id}`, { method: "DELETE" });
@@ -170,7 +171,16 @@ export default function WorkflowsPage() {
                 <span className="text-zinc-600">{rows.length}</span>
               </div>
               {rows.map((w) => (
-                <Row key={w.id} w={w} busy={busy === w.id} onRerun={() => rerun(w.id)} onDelete={() => remove(w)} />
+                <Row
+                  key={w.id}
+                  w={w}
+                  busy={busy === w.id}
+                  confirming={confirmId === w.id}
+                  onRerun={() => rerun(w.id)}
+                  onAskDelete={() => setConfirmId(w.id)}
+                  onCancelDelete={() => setConfirmId(null)}
+                  onDelete={() => remove(w)}
+                />
               ))}
             </section>
           );
@@ -180,7 +190,23 @@ export default function WorkflowsPage() {
   );
 }
 
-function Row({ w, busy, onRerun, onDelete }: { w: Workflow; busy: boolean; onRerun: () => void; onDelete: () => void }) {
+function Row({
+  w,
+  busy,
+  confirming,
+  onRerun,
+  onAskDelete,
+  onCancelDelete,
+  onDelete,
+}: {
+  w: Workflow;
+  busy: boolean;
+  confirming: boolean;
+  onRerun: () => void;
+  onAskDelete: () => void;
+  onCancelDelete: () => void;
+  onDelete: () => void;
+}) {
   const sources = [...new Set((w.plan?.sources ?? []).map((s) => connectorLabel(s.connector)))];
   const running = isRunning(w.status);
   const meta = [
@@ -200,14 +226,25 @@ function Row({ w, busy, onRerun, onDelete }: { w: Workflow; busy: boolean; onRer
           </div>
         )}
       </div>
+      {confirming && (
+        <div className="relative z-10 flex items-center gap-1.5 text-[12px]" role="group" aria-label="Confirm delete">
+          <span className="text-zinc-400">Delete with all records?</span>
+          <button type="button" onClick={onDelete} className="h-6 rounded-md bg-danger/15 px-2 text-danger-soft hover:bg-danger/25">
+            Delete
+          </button>
+          <button type="button" onClick={onCancelDelete} className="h-6 rounded-md px-2 text-zinc-400 hover:bg-white/[0.06]">
+            Cancel
+          </button>
+        </div>
+      )}
       {/* actions replace the timestamp on hover or keyboard focus; touch screens (no hover) always show them */}
       <span
-        className="text-[12px] text-zinc-600 group-focus-within:hidden group-hover:hidden [@media(hover:none)]:hidden"
+        className={`text-[12px] text-zinc-600 group-focus-within:hidden group-hover:hidden [@media(hover:none)]:hidden ${confirming ? "!hidden" : ""}`}
         title={formatDateTime(w.created_at)}
       >
         {timeAgo(w.created_at)}
       </span>
-      <div className="relative z-10 hidden gap-0.5 group-focus-within:flex group-hover:flex [@media(hover:none)]:flex">
+      <div className={`relative z-10 hidden gap-0.5 group-focus-within:flex group-hover:flex [@media(hover:none)]:flex ${confirming ? "!hidden" : ""}`}>
         <button
           type="button"
           title="Rerun"
@@ -222,7 +259,7 @@ function Row({ w, busy, onRerun, onDelete }: { w: Workflow; busy: boolean; onRer
           type="button"
           title="Delete"
           aria-label={`Delete ${w.title || w.prompt}`}
-          onClick={onDelete}
+          onClick={onAskDelete}
           disabled={busy}
           className="grid h-7 w-7 place-items-center rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
         >

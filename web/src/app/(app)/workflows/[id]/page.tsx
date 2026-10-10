@@ -57,6 +57,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const [pollKey, setPollKey] = useState(0); // bump to resume polling after review/refresh
   const [cited, setCited] = useState<number[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null); // shown inline instead of a browser alert
+  const [confirmDelete, setConfirmDelete] = useState(false); // inline "Delete / Cancel" bar instead of a browser confirm
   const [now, setNow] = useState(() => Date.now()); // ticks while running so the "stuck" check re-evaluates
   const [showBuild, setShowBuild] = useState(true); // "How this dataset was built": opens while a run is in progress, collapses when it finishes
   const lastRecordFetch = useRef(0);
@@ -175,7 +176,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   }
 
   async function remove() {
-    if (!confirm("Delete this workflow and all of its records?")) return;
+    setConfirmDelete(false);
     setBusy("delete");
     try {
       await fetchJSON(`/api/workflows/${id}`, { method: "DELETE" });
@@ -267,13 +268,26 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
           <ExportLink label="JSON" title="Export as JSON" href={`/api/workflows/${id}/export?format=json`} disabled={!recordCount}>
             <FileJson className="h-3.5 w-3.5" aria-hidden />
           </ExportLink>
-          <Btn label="Delete workflow" iconOnly onClick={remove} disabled={!canEdit || busy !== null} danger>
+          <Btn label="Delete workflow" iconOnly onClick={() => setConfirmDelete(true)} disabled={!canEdit || busy !== null || confirmDelete} danger>
             {busy === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Trash2 className="h-3.5 w-3.5" aria-hidden />}
           </Btn>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1400px] px-5 py-6">
+      {confirmDelete && (
+        <div role="alertdialog" aria-label="Confirm delete" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-[13px]">
+          <span className="text-zinc-200">Delete this workflow and all of its records?</span>
+          <span className="ml-auto flex gap-2">
+            <button type="button" onClick={remove} className="h-7 rounded-md bg-danger/20 px-2.5 text-[12.5px] font-medium text-danger-soft hover:bg-danger/30">
+              Delete
+            </button>
+            <button type="button" onClick={() => setConfirmDelete(false)} className="h-7 rounded-md border border-line-strong px-2.5 text-[12.5px] text-zinc-300 hover:bg-white/[0.06]">
+              Cancel
+            </button>
+          </span>
+        </div>
+      )}
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[22px] font-semibold text-zinc-100">{w.title || w.plan?.title || w.prompt}</h1>
