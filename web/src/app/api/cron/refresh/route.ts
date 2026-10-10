@@ -8,8 +8,9 @@ export const maxDuration = 300;
 
 /** Called by Vercel Cron (see vercel.json): refresh watched datasets whose interval has elapsed. */
 export async function GET(req: Request) {
+  // fail closed: without a secret anyone could trigger refreshes and spend LLM/Firecrawl quota
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const due = await sql`SELECT id, plan FROM workflows
     WHERE status IN ('completed', 'failed', 'cancelled') AND plan ? 'watch'
       AND COALESCE(finished_at, updated_at) < now() - make_interval(hours => (plan->'watch'->>'every_hours')::int)
