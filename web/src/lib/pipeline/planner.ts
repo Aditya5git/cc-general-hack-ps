@@ -61,8 +61,8 @@ function sanitize(plan: WorkflowPlan, prompt: string): WorkflowPlan {
     entity: plan.entity || "record",
     fields,
     sources,
-    filters: plan.filters ?? [],
-    subject_filters: subjectFilters(plan.filters ?? [], plan.subject_filters),
+    filters: cleanFilters(plan.filters),
+    subject_filters: subjectFilters(cleanFilters(plan.filters), plan.subject_filters),
     sort_by: sortBy(fields, plan.sort_by),
     dedupe_on: (plan.dedupe_on ?? []).filter((d) => fields.some((f) => f.name === d)),
     max_results: Math.min(plan.max_results || 50, 150),
@@ -84,6 +84,10 @@ const topN = (p: string) => {
   const n = Number(m?.[1] ?? m?.[2]);
   return n >= 1 && n <= 150 ? n : undefined;
 };
+
+/** Same trimming as applyPlanEdits, so a reviewed plan sent back unchanged keeps its subject filters. */
+const cleanFilters = (filters: unknown) =>
+  (Array.isArray(filters) ? filters : []).map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 8);
 
 /** Keep only subject filters that are real filters of the plan (the model must not invent new ones). */
 function subjectFilters(filters: string[], subject: unknown): string[] {
@@ -235,5 +239,7 @@ export function applyPlanEdits(original: WorkflowPlan, edited: Partial<WorkflowP
   const dedupe = original.dedupe_on.filter((d) => fields.some((f) => f.name === d));
   // a filter whose text the user changed is no longer known to define the subject, so it becomes a detail filter
   const subject_filters = (original.subject_filters ?? []).filter((s) => filters.includes(s));
-  return { ...original, fields, sources, filters, subject_filters, dedupe_on: dedupe.length ? dedupe : [fields[0].name] };
+  // a sort on a column the user renamed or removed is dropped rather than silently doing nothing
+  const sort_by = sortBy(fields, original.sort_by);
+  return { ...original, fields, sources, filters, subject_filters, sort_by, dedupe_on: dedupe.length ? dedupe : [fields[0].name] };
 }

@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { overUsageLimit, sql } from "@/lib/db";
 import { friendlyReason } from "@/lib/errors";
 import { llmJSON } from "@/lib/llm";
-import { WHY_KEY, type WorkflowPlan } from "@/lib/types";
+import { WHY_KEY, type DataRecord, type WorkflowPlan } from "@/lib/types";
 import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
+import { rankRows } from "@/lib/pipeline/validate";
 import { authorize } from "@/lib/auth/access";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +28,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const [w] = await sql`SELECT prompt, plan FROM workflows WHERE id = ${id}`;
   if (!w) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const plan = w.plan as WorkflowPlan | null;
-  const records = await sql`SELECT id, data, source_name, confidence FROM records
-    WHERE workflow_id = ${id} ORDER BY confidence DESC, id LIMIT ${MAX_ROWS}`;
+  // the rows the table shows first (the plan's order, e.g. "top by market cap"), not just the highest scores
+  const records = rankRows(
+    plan,
+    (await sql`SELECT id, data, source_name, confidence FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id`) as DataRecord[],
+  ).slice(0, MAX_ROWS);
   if (!records.length) return NextResponse.json({ error: "This dataset has no records yet." }, { status: 400 });
   const limited = await overUsageLimit(access.user.id, "ai");
   if (limited) return NextResponse.json({ error: limited }, { status: 429 });

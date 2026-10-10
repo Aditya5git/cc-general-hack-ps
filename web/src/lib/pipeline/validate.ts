@@ -188,9 +188,9 @@ export function rankRows<T extends { data: Record<string, unknown>; confidence: 
   const type = by && plan.fields.find((f) => f.name === by.field)?.type;
   const dir = by?.direction === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
+    const f = flagged(a) - flagged(b);
+    if (f) return f;
     if (by) {
-      const f = flagged(a) - flagged(b);
-      if (f) return f;
       const va = sortValue(a.data[by.field], type);
       const vb = sortValue(b.data[by.field], type);
       if (va != null && vb != null && va !== vb) return (va - vb) * dir;
@@ -205,7 +205,8 @@ const NAMING = /(^|_)(name|title)$/;
 /** The column that names a row (job title, company name…). The only field a row must have. A column called
  *  *name / *title wins, so a required "salary" listed first never becomes the name. */
 export const identityField = (plan: WorkflowPlan) =>
-  (plan.fields.find((f) => f.type === "string" && NAMING.test(f.name)) ??
+  (plan.fields.find((f) => f.required && f.type === "string" && NAMING.test(f.name)) ??
+    plan.fields.find((f) => f.type === "string" && NAMING.test(f.name)) ??
     plan.fields.find((f) => f.required && f.type === "string") ??
     plan.fields.find((f) => f.type === "string") ??
     plan.fields[0]).name;
@@ -221,7 +222,9 @@ function score(plan: WorkflowPlan, idField: string, data: Record<string, unknown
   const total = plan.fields.reduce((n, f) => n + weight(f), 0);
   const fill = plan.fields.reduce((n, f) => n + (data[f.name] != null ? weight(f) : 0), 0) / total;
   const missing = plan.fields.filter((f) => f.required && f.name !== idField && data[f.name] == null).length;
-  const s = (0.6 * relevance + 0.4 * fill) * MISSING_REQUIRED ** missing * (failedFilters ? 0.5 : 1);
+  // capped at two: past that the row is already low, and a plan with many required columns shouldn't push every
+  // partial row under rows that failed a filter
+  const s = (0.6 * relevance + 0.4 * fill) * MISSING_REQUIRED ** Math.min(missing, 2) * (failedFilters ? 0.5 : 1);
   return Math.round(s * 100) / 100;
 }
 
@@ -259,7 +262,9 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
     // no name, rows the extractor rated as not being the requested thing, and rows that fail a subject filter
     // ("must be a React role"): a sales job is not a weaker match for "React jobs", it is no match.
     const failed = plan.filters.filter((_, i) => r.checks?.[i] === false);
-    const offSubject = failed.some((f) => subject.has(f));
+    // checks are matched to filters by position: only trust a "fails the subject" verdict when the model gave one
+    // check per filter, or a skipped check would shift "remote: false" onto the subject filter
+    const offSubject = r.checks?.length === plan.filters.length && failed.some((f) => subject.has(f));
     const minRelevance = r.method === "keyword" ? KEYWORD_MIN_RELEVANCE : MIN_RELEVANCE;
     if (data[idField] == null || r.relevance < minRelevance || offSubject) {
       if (data[idField] == null) reasons.no_name++;

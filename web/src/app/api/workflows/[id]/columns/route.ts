@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { overUsageLimit, sql } from "@/lib/db";
 import { llmJSON } from "@/lib/llm";
-import { WHY_KEY, type FieldSpec, type WorkflowPlan } from "@/lib/types";
+import { WHY_KEY, type FieldSpec, type DataRecord, type WorkflowPlan } from "@/lib/types";
 import { UNTRUSTED_RULE, untrusted } from "@/lib/pipeline/untrusted";
+import { rankRows } from "@/lib/pipeline/validate";
 import { authorize } from "@/lib/auth/access";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const plan = w.plan as WorkflowPlan | null;
   if (!plan) return NextResponse.json({ error: "This workflow has no plan." }, { status: 400 });
 
-  const records = await sql`SELECT id, data, source_url FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id LIMIT ${MAX_ROWS}`;
+  // fill the rows the table shows first, in the plan's order
+  const records = rankRows(
+    plan,
+    (await sql`SELECT id, data, source_url, confidence FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id`) as DataRecord[],
+  ).slice(0, MAX_ROWS);
   if (!records.length) return NextResponse.json({ error: "No records to enrich." }, { status: 400 });
   const limited = await overUsageLimit(access.user.id, "ai");
   if (limited) return NextResponse.json({ error: limited }, { status: 429 });
