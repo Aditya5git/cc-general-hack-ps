@@ -20,7 +20,8 @@ Return JSON:
   "filters": [plain-English constraints from the request, e.g. "must mention salary", "posted in last 7 days", "based in India"],
   "subject_filters": [the filters (copied exactly) that define WHAT a row is: its topic, skill, technology or kind of thing, e.g. "must be a React or React Native role", "must be a vector database". A row failing one of these is not what the user asked for at all. Never list details like salary, location, dates or size here],
   "dedupe_on": [field names that identify a unique row],
-  "max_results": int (default 50, max 150)
+  "sort_by": {"field": a number or date field, "direction": "desc"|"asc"} when the request implies an order ("top/largest by market cap" → market_cap desc, "most starred" → stars desc, "latest" → posted_at desc, "cheapest" → price asc), otherwise null,
+  "max_results": int (default 50, max 150; "top 15" → 15)
 }
 
 The "intent" and "entity" must keep the user's subject (what kind of thing, about what): a place is only a constraint, never the whole request. "Video editing jobs in Lucknow" → entity "job posting", intent about video editing jobs; never "anything related to Lucknow".
@@ -62,11 +63,27 @@ function sanitize(plan: WorkflowPlan, prompt: string): WorkflowPlan {
     sources,
     filters: plan.filters ?? [],
     subject_filters: subjectFilters(plan.filters ?? [], plan.subject_filters),
+    sort_by: sortBy(fields, plan.sort_by),
     dedupe_on: (plan.dedupe_on ?? []).filter((d) => fields.some((f) => f.name === d)),
     max_results: Math.min(plan.max_results || 50, 150),
     planner: "llm",
   };
 }
+
+/** Keep sort_by only when it names a number or date column of the plan. */
+function sortBy(fields: FieldSpec[], s: unknown): WorkflowPlan["sort_by"] {
+  const { field, direction } = (s ?? {}) as { field?: unknown; direction?: unknown };
+  const f = fields.find((x) => x.name === field);
+  if (!f || (f.type !== "number" && f.type !== "date")) return undefined;
+  return { field: f.name, direction: direction === "asc" ? "asc" : "desc" };
+}
+
+/** "top 15 …" / "15 largest …" → 15 */
+const topN = (p: string) => {
+  const m = p.match(/\b(?:top|best|largest|biggest)\s+(\d{1,3})\b|\b(\d{1,3})\s+(?:top|best|largest|biggest|most)\b/);
+  const n = Number(m?.[1] ?? m?.[2]);
+  return n >= 1 && n <= 150 ? n : undefined;
+};
 
 /** Keep only subject filters that are real filters of the plan (the model must not invent new ones). */
 function subjectFilters(filters: string[], subject: unknown): string[] {
@@ -182,7 +199,13 @@ export function heuristicPlan(prompt: string): WorkflowPlan {
     sources,
     filters: [],
     dedupe_on: dedupe,
-    max_results: 60,
+    sort_by:
+      entity === "cryptocurrency"
+        ? { field: "market_cap", direction: "desc" }
+        : entity === "repository" && /\b(top|popular|most starred|best|largest)\b/.test(p)
+          ? { field: "stars", direction: "desc" }
+          : undefined,
+    max_results: topN(p) ?? 60,
     planner: "heuristic",
   };
 }

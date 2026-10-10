@@ -56,6 +56,41 @@ const norm = (v: unknown) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+/** A sortable number for a cell: numbers as-is, "$1,234" → 1234, dates → epoch ms; null when there is none. */
+function sortValue(v: unknown, type: FieldSpec["type"] | undefined): number | null {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (type === "date") {
+    const t = Date.parse(String(v));
+    return Number.isNaN(t) ? null : t;
+  }
+  const n = Number(String(v).replace(/[$€£₹,%\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The order rows are shown, exported and cut to max_results in. Rows that miss a filter (✗) come after rows that
+ * don't; then, when the plan asks for an order ("top by market cap"), by that column with empty values last;
+ * then by score.
+ */
+export function rankRows<T extends { data: Record<string, unknown>; confidence: number }>(plan: WorkflowPlan | null, rows: T[]): T[] {
+  const flagged = (r: T) => (Array.isArray(r.data[CHECKS_KEY]) && (r.data[CHECKS_KEY] as unknown[]).includes(false) ? 1 : 0);
+  const by = plan?.sort_by;
+  const type = by && plan.fields.find((f) => f.name === by.field)?.type;
+  const dir = by?.direction === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    if (by) {
+      const f = flagged(a) - flagged(b);
+      if (f) return f;
+      const va = sortValue(a.data[by.field], type);
+      const vb = sortValue(b.data[by.field], type);
+      if (va != null && vb != null && va !== vb) return (va - vb) * dir;
+      if ((va == null) !== (vb == null)) return va == null ? 1 : -1;
+    }
+    return b.confidence - a.confidence;
+  });
+}
+
 const NAMING = /(^|_)(name|title)$/;
 
 /** The column that names a row (job title, company name…). The only field a row must have. A column called
@@ -158,7 +193,7 @@ export function validateAndDedupe(plan: WorkflowPlan, rows: Extracted[]): {
     }
   }
 
-  const clean = [...out.values()].sort((a, b) => b.confidence - a.confidence).slice(0, plan.max_results);
+  const clean = rankRows(plan, [...out.values()]).slice(0, plan.max_results);
   const relaxed = clean.some((c) => Array.isArray(c.data[CHECKS_KEY]) && (c.data[CHECKS_KEY] as unknown[]).includes(false));
   return { clean, invalid, duplicates, reasons, relaxed };
 }

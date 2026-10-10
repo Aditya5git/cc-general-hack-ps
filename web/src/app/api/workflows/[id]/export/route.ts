@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
-import { CHECKS_KEY, WHY_KEY, type WorkflowPlan } from "@/lib/types";
+import { CHECKS_KEY, WHY_KEY, type DataRecord, type WorkflowPlan } from "@/lib/types";
 import { authorize } from "@/lib/auth/access";
+import { rankRows } from "@/lib/pipeline/validate";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +17,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const format = new URL(req.url).searchParams.get("format") === "json" ? "json" : "csv";
   const [w] = await sql`SELECT title, prompt, plan FROM workflows WHERE id = ${id}`;
   if (!w) return new Response("Not found", { status: 404 });
-  const records = await sql`SELECT data, source_name, source_url, confidence, fetched_at
-    FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id`;
+  // same order as the table: the plan's sort ("top by market cap"), then score
+  const records = rankRows(
+    w.plan as WorkflowPlan | null,
+    (await sql`SELECT data, source_name, source_url, confidence, fetched_at FROM records WHERE workflow_id = ${id} ORDER BY confidence DESC, id`) as DataRecord[],
+  );
   const slug = String(w.title || "dataset").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50);
   const plan = w.plan as WorkflowPlan | null;
   const cols = plan?.fields.map((f) => f.name) ?? [...new Set(records.flatMap((r) => Object.keys(r.data)))].filter((k) => !k.startsWith("_"));
