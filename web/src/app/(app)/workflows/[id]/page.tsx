@@ -56,7 +56,7 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
   const [busy, setBusy] = useState<"rerun" | "refresh" | "delete" | "stop" | null>(null);
   const [pollKey, setPollKey] = useState(0); // bump to resume polling after review/refresh
   const [cited, setCited] = useState<number[] | null>(null);
-  const [showBuild, setShowBuild] = useState(false); // "How this dataset was built" (agents + steps), collapsed by default
+  const [showBuild, setShowBuild] = useState(true); // "How this dataset was built": opens while a run is in progress, collapses when it finishes
   const lastRecordFetch = useRef(0);
 
   const loadRecords = useCallback(async () => {
@@ -85,6 +85,13 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
 
   const status = detail?.workflow.status;
   const running = status ? isRunning(status) : true;
+
+  // Mission control follows the run: open when it starts, closed when it ends (the reader can still toggle it).
+  const [prevRunning, setPrevRunning] = useState(running);
+  if (prevRunning !== running) {
+    setPrevRunning(running);
+    setShowBuild(running);
+  }
 
   // Poll workflow detail while running
   useEffect(() => {
