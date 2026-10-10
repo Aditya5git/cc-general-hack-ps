@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Layers, PenSquare, Search } from "lucide-react";
+import { Layers, PenSquare } from "lucide-react";
 import type { Workflow } from "@/lib/types";
 import { Logo } from "./Logo";
 import { StatusIcon } from "./StatusBadge";
@@ -71,9 +71,6 @@ export function Sidebar() {
           trailing={workflows?.length ? String(workflows.length) : undefined}
         >
           Workflows
-        </NavItem>
-        <NavItem href="/workflows" active={false} icon={<Search className="h-3.5 w-3.5" />}>
-          Search
         </NavItem>
       </nav>
 
