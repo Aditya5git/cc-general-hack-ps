@@ -11,12 +11,14 @@ import { fetchJSON, isRunning, timeAgo, formatDateTime, connectorLabel } from "@
 const FILTERS = [
   { id: "all", label: "All" },
   { id: "running", label: "Running" },
+  { id: "review", label: "Needs review" },
   { id: "completed", label: "Completed" },
   { id: "failed", label: "Failed" },
 ] as const;
 
 const GROUPS = [
   { id: "running", label: "Running", status: "processing", match: (w: Workflow) => isRunning(w.status) },
+  { id: "review", label: "Needs review", status: "review", match: (w: Workflow) => w.status === "review" },
   { id: "completed", label: "Completed", status: "completed", match: (w: Workflow) => w.status === "completed" },
   { id: "failed", label: "Failed / stopped", status: "failed", match: (w: Workflow) => w.status === "failed" || w.status === "cancelled" },
 ];
@@ -176,7 +178,7 @@ function Row({ w, busy, onRerun, onDelete }: { w: Workflow; busy: boolean; onRer
   const sources = [...new Set((w.plan?.sources ?? []).map((s) => connectorLabel(s.connector)))];
   const running = isRunning(w.status);
   const meta = [
-    w.status === "completed" ? `${w.record_count ?? 0} rows` : running ? `${w.progress}% · ${w.status}` : w.status === "failed" ? "Failed" : null,
+    w.status === "completed" ? `${w.record_count ?? 0} rows` : running ? `${w.progress}% · ${w.status}` : w.status === "failed" ? "Failed" : w.status === "review" ? "Awaiting your review" : null,
     sources.length ? sources.slice(0, 3).join(", ") + (sources.length > 3 ? ` +${sources.length - 3}` : "") : null,
   ].filter(Boolean);
   return (
