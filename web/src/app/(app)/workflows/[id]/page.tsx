@@ -379,6 +379,12 @@ export default function WorkflowPage({ params }: { params: Promise<{ id: string 
             <TabBtn active={tab === "sources"} onClick={() => setTab("sources")} icon={Plug} label="Sources" count={detail.sources.length} />
             <TabBtn active={tab === "log"} onClick={() => setTab("log")} icon={ScrollText} label="Activity log" count={detail.events.length} />
           </div>
+          {tab === "data" && (s.extraction === "heuristic" || s.extraction === "mixed") && (
+            <div role="status" className="mb-3 flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[12.5px] text-amber-200">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              AI extraction was unavailable for some pages; those rows were matched by keywords.
+            </div>
+          )}
           {tab === "data" && !!w.plan && w.status !== "review" && (records.length > 0 || !running) && (
             <AskData workflowId={id} fields={w.plan.fields} entity={w.plan.entity} disabled={running || !records.length} onCite={setCited} />
           )}
