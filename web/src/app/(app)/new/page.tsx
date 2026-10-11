@@ -120,8 +120,8 @@ export default function NewRequest() {
             <span className="text-ai">Get a dataset.</span>
           </h1>
           <p className="mx-auto mt-5 max-w-[540px] text-[15.5px] leading-relaxed text-ink-muted">
-            Describe what you need in plain English. AI agents plan the sources, collect from the live web, and return a clean table where
-            every row proves where it came from.
+            Describe what you need in plain English. AI plans the sources, collects from the live web, and returns a clean table where
+            every row links to its source page.
           </p>
 
           {/* Composer */}

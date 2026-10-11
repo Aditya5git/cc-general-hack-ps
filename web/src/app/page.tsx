@@ -20,13 +20,13 @@ import { DemoRun } from "@/components/landing/DemoRun";
 
 const STEPS = [
   { n: "01", icon: PenLine, title: "Describe it", body: "Type the dataset you need in plain English, like you'd ask a colleague." },
-  { n: "02", icon: SlidersHorizontal, title: "Review the plan", body: "A planning agent proposes the details, sources and must-have conditions. Change anything." },
-  { n: "03", icon: Bot, title: "Agents collect & verify", body: "Sources are searched in parallel; every row is extracted, checked and de-duplicated live." },
+  { n: "02", icon: SlidersHorizontal, title: "Review the plan", body: "The AI planner proposes the details, sources and must-have conditions. Change anything." },
+  { n: "03", icon: Bot, title: "AI-planned pipeline collects & verifies", body: "Sources are searched in parallel; every row is extracted, checked and de-duplicated live." },
   { n: "04", icon: FileSpreadsheet, title: "Explore & export", body: "Search, filter, chart and question the table, then export to CSV or JSON." },
 ];
 
 const FEATURES = [
-  { icon: Quote, title: "Evidence on every row", body: "The exact sentence each row came from, matched word-for-word against the fetched page in code, not by the AI." },
+  { icon: Quote, title: "Evidence on every row", body: "The sentence each row came from, checked against the fetched page in code, not by the AI." },
   { icon: ListChecks, title: "Every condition checked", body: "Each row is marked met, not met or not stated for every condition in your request, with a one-line reason." },
   { icon: Workflow, title: "Mission control", body: "Watch the planner, each source, the extractor and the validator work live, with rows streaming into the table." },
   { icon: MessageSquareText, title: "Ask your data", body: "Ask questions in plain English; answers cite the rows they used so you can check them." },
@@ -93,7 +93,7 @@ export default function Landing() {
           </h1>
           <p className="mx-auto mt-6 max-w-[560px] text-[16px] leading-relaxed text-zinc-300">
             Describe the data your business needs. AI plans the collection, gathers it from permitted sources, and hands you a clean
-            table where every row proves where it came from.
+            table where every row links to its source page.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link href="/new" className="btn-glow inline-flex h-12 items-center gap-2 rounded-xl px-6 text-[15px] font-medium">
