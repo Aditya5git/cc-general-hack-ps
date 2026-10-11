@@ -108,8 +108,8 @@ export function Evidence({ record, fields }: { record: DataRecord; fields: Field
             keyword
               ? "The AI was unavailable, so this sentence was picked because it has the most words from your request"
               : verified
-                ? "This exact text was found in the page DataPilot fetched"
-                : "Couldn't match this text word-for-word in the fetched page"
+                ? "Quote found in source"
+                : "Quote not found in source"
           }
         >
           {verified ? <BadgeCheck className="h-3 w-3" /> : <HelpCircle className="h-3 w-3" />}

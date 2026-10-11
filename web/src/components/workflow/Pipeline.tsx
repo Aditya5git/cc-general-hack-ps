@@ -176,7 +176,7 @@ export function Pipeline({ workflow: w, sources }: { workflow: Workflow; sources
               <span className="text-zinc-200">{s.invalid ?? 0}</span> invalid dropped
             </>
           ) : (
-            "Apply filters, check required fields, remove duplicates, score confidence."
+            "Apply filters, check required fields, remove duplicates, compute match score."
           )}
         </p>
       ),

@@ -50,7 +50,7 @@ export function MissionControl({ workflow: w, sources: runs }: { workflow: Workf
     x: 4,
     y: mid,
     w: 150,
-    title: "Planning agent",
+    title: "Planning step",
     sub: `${w.plan.fields.length} columns · ${w.plan.sources.length} sources`,
     state: st === "queued" && !s.runs ? "active" : "done",
   };
@@ -68,7 +68,7 @@ export function MissionControl({ workflow: w, sources: runs }: { workflow: Workf
     x: 470,
     y: mid,
     w: 156,
-    title: "Extraction agent",
+    title: "Extraction step",
     sub: st === "processing" ? `reading pages… ${extractPct}%` : s.extracted !== undefined ? `${s.extracted} rows extracted` : "waiting",
     state: st === "processing" ? "active" : failedAt === "extract" ? "failed" : s.extracted !== undefined ? "done" : "pending",
   };
@@ -116,11 +116,11 @@ export function MissionControl({ workflow: w, sources: runs }: { workflow: Workf
         <span className={`h-1.5 w-1.5 rounded-full ${["completed", "failed", "review", "cancelled"].includes(st) ? "bg-zinc-600" : "mc-dot bg-running"}`} />
         <span className="font-medium text-zinc-200">Mission control</span>
         <span className="text-zinc-500">
-          {st === "review" ? "waiting for your approval" : st === "completed" ? "all agents finished" : st === "cancelled" ? "stopped by you" : st === "failed" ? "stopped on an error" : "agents working live"}
+          {st === "review" ? "waiting for your approval" : st === "completed" ? "all steps finished" : st === "cancelled" ? "stopped by you" : st === "failed" ? "stopped on an error" : "pipeline working live"}
         </span>
       </div>
       <div className="overflow-x-auto px-3 py-3">
-        <svg viewBox={`0 0 1000 ${height}`} className="h-auto min-w-[680px] w-full" role="img" aria-label="Agent pipeline status">
+        <svg viewBox={`0 0 1000 ${height}`} className="h-auto min-w-[680px] w-full" role="img" aria-label="Pipeline status">
           {srcNodes.map((sn, i) => edge(planner, sn, sn.state === "active", sn.state !== "pending", `e-p-${i}`))}
           {srcNodes.map((sn, i) => edge(sn, extractor, extractor.state === "active" && sn.state === "done", extractor.state !== "pending" && sn.state === "done", `e-x-${i}`))}
           {edge(extractor, validator, validator.state === "active", validator.state === "done", "e-v")}
