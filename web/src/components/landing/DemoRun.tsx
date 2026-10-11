@@ -16,7 +16,7 @@ export const useReducedMotion = () =>
 
 const DEMO_PROMPT = "Remote React jobs with salary info";
 const DEMO_AGENTS = [
-  { label: "Planner", detail: "8 columns" },
+  { label: "Planner", detail: "4 columns" },
   { label: "Remotive", detail: "16 items" },
   { label: "Arbeitnow", detail: "14 items" },
   { label: "RemoteOK", detail: "7 items" },
